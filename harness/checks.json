@@ -1,0 +1,19 @@
+{
+  "$schema-note": "Per-repo verifier config for the pi subagents engine (harness/pi/subagents). The Verifier may run ONLY the named checks defined here plus the always-available git checks (git-diff, git-diff-stat, git-status, git-log). Each check maps to a FIXED argv vector run with shell:false (no shell, no chaining). Replace the example checks below with your project's real commands. See harness/examples/checks.python-lmcache.json for a complete Python example.",
+  "diffBases": ["main", "HEAD~1"],
+  "env": {
+    "venvBinDir": ".venv/bin",
+    "virtualEnvDir": ".venv"
+  },
+  "testFile": {
+    "cmd": "echo",
+    "argsPrefix": ["replace-with-your-single-test-runner"],
+    "rootDir": "tests",
+    "pathRegex": "^tests/[A-Za-z0-9_./:\\-\\[\\]]+$",
+    "timeoutMs": 1200000
+  },
+  "checks": {
+    "test": { "cmd": "echo", "args": ["replace with your test command, e.g. pytest -q"], "timeoutMs": 1200000 },
+    "lint": { "cmd": "echo", "args": ["replace with your lint command, e.g. ruff check ."], "timeoutMs": 300000 }
+  }
+}

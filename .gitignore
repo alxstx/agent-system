@@ -1,0 +1,8 @@
+# OS / editor artifacts
+.DS_Store
+desktop.ini
+Thumbs.db
+
+# Node (pi extension under harness/pi)
+node_modules/
+*.log

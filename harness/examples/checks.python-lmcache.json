@@ -1,0 +1,39 @@
+{
+  "$schema-note": "Per-repo verifier config consumed by the pi subagents engine (harness/pi/subagents). The Verifier may run ONLY the named checks defined here plus the always-available git checks. Each check maps to a fixed argv vector run with shell:false. Edit this file to adapt the harness to a new project; the engine code stays unchanged.",
+  "diffBases": ["main", "HEAD~1"],
+  "env": {
+    "venvBinDir": ".venv/bin",
+    "virtualEnvDir": ".venv"
+  },
+  "testFile": {
+    "cmd": "pytest",
+    "argsPrefix": ["-xvs"],
+    "rootDir": "tests",
+    "pathRegex": "^tests/[A-Za-z0-9_./:\\-\\[\\]]+$",
+    "timeoutMs": 1200000
+  },
+  "checks": {
+    "test": {
+      "cmd": "pytest",
+      "args": [
+        "-xvs",
+        "--ignore=tests/disagg",
+        "--ignore=tests/v1/multiprocess/",
+        "--ignore=tests/v1/distributed/",
+        "--ignore=tests/v1/mp_observability/",
+        "--ignore=tests/skipped",
+        "--ignore=tests/cli/commands/trace",
+        "--ignore=tests/v1/storage_backend/test_eic.py",
+        "--ignore=tests/v1/storage_backend/test_p2p_backend_with_controller.py"
+      ],
+      "timeoutMs": 1200000
+    },
+    "lint": { "cmd": "ruff", "args": ["check", "."], "timeoutMs": 300000 },
+    "format-check": { "cmd": "ruff", "args": ["format", "--check", "."], "timeoutMs": 300000 },
+    "imports-check": { "cmd": "isort", "args": ["--check-only", "--diff", "."], "timeoutMs": 300000 },
+    "typecheck": { "cmd": "mypy", "args": ["--config-file=pyproject.toml"], "timeoutMs": 600000 },
+    "spell": { "cmd": "codespell", "args": ["--toml", "pyproject.toml"], "timeoutMs": 300000 },
+    "precommit": { "cmd": "pre-commit", "args": ["run", "--all-files"], "timeoutMs": 900000 },
+    "docs-build": { "cmd": "make", "args": ["-C", "docs", "html"], "timeoutMs": 900000 }
+  }
+}
