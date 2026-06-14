@@ -41,13 +41,21 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 const RUNNER_PATH = path.join(import.meta.dirname ?? __dirname, "runner.ts");
 
 const MAX_DIFF_BYTES = 150 * 1024;
+
+// Phase 0.5 — per-role model & thinking policy (one place; don't scatter ids).
+// Reviewing/adversarial-judge agents run on GPT-5.5; every other sub-agent runs on
+// Opus 4.8; both at "xhigh" thinking. Passed to runSubagent per role (see the role map
+// in the README). The exact model-id strings are FLAG-to-verify on a live pi
+// (`pi --list-models`); if one isn't listed, update ONLY the constant below.
+const EFFORT = "xhigh";
+const MODEL_DEFAULT = "anthropic/opus-4.8"; // plan, monitor, triage, research, report
+const MODEL_REVIEW = "openai/gpt-5.5"; // the reviewing/adversarial-judge agents (verify)
 
 // Universal git checks the Verifier can always run (mirrors runner.ts).
 const GIT_CHECKS = ["git-diff", "git-diff-stat", "git-status", "git-log"];
@@ -240,6 +248,10 @@ interface RunSubagentOptions {
 	promptBodyPath: string;
 	tools: string;
 	runnerPath?: string;
+	/** Phase 0.5: per-role model id (e.g. MODEL_DEFAULT / MODEL_REVIEW). Omit to inherit the operator's default. */
+	model?: string;
+	/** Phase 0.5: thinking level; defaults to EFFORT ("xhigh"). */
+	thinking?: string;
 	userTurn: string;
 	onProgress?: (turns: number, lastTool: string | undefined) => void;
 }
@@ -250,10 +262,6 @@ async function runSubagent(opts: RunSubagentOptions): Promise<SubagentResult> {
 	const brief = readIfExists(opts.agentsPath) ?? "";
 	const body = readIfExists(opts.promptBodyPath) ?? "";
 	const combined = `${brief.trim()}\n\n---\n\n${body.trim()}\n`;
-
-	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
-	const promptFile = path.join(tmpDir, "system.md");
-	fs.writeFileSync(promptFile, combined, { encoding: "utf-8", mode: 0o600 });
 
 	const args: string[] = [
 		"--mode",
@@ -268,6 +276,8 @@ async function runSubagent(opts: RunSubagentOptions): Promise<SubagentResult> {
 	];
 	if (opts.runnerPath) args.push("-e", opts.runnerPath); // explicit -e still loads under --no-extensions
 	args.push("--append-system-prompt", combined);
+	if (opts.model) args.push("--model", opts.model); // Phase 0.5: per-role model
+	args.push("--thinking", opts.thinking ?? EFFORT); // Phase 0.5: xhigh by default
 	args.push("--tools", opts.tools);
 	args.push(opts.userTurn); // positional prompt = first (only) user turn
 
@@ -278,68 +288,60 @@ async function runSubagent(opts: RunSubagentOptions): Promise<SubagentResult> {
 		turns: 0,
 	};
 
-	try {
-		await new Promise<void>((resolve) => {
-			const inv = getPiInvocation(args);
-			const proc = spawn(inv.command, inv.args, {
-				cwd: opts.repoRoot,
-				shell: false,
-				stdio: ["ignore", "pipe", "pipe"],
-			});
-			let buffer = "";
-
-			const processLine = (line: string) => {
-				if (!line.trim()) return;
-				let event: any;
-				try {
-					event = JSON.parse(line);
-				} catch {
-					return;
-				}
-				if (event.type === "message_end" && event.message?.role === "assistant") {
-					const msg = event.message;
-					result.turns++;
-					let text = "";
-					let lastTool: string | undefined;
-					for (const part of msg.content ?? []) {
-						if (part.type === "text") text += part.text;
-						else if (part.type === "toolCall") lastTool = part.name;
-					}
-					if (text.trim()) result.finalText = text; // keep the latest substantive assistant text
-					if (msg.stopReason) result.stopReason = msg.stopReason;
-					if (msg.errorMessage) result.errorMessage = msg.errorMessage;
-					opts.onProgress?.(result.turns, lastTool);
-				}
-			};
-
-			proc.stdout.on("data", (d) => {
-				buffer += d.toString();
-				const lines = buffer.split("\n");
-				buffer = lines.pop() ?? "";
-				for (const l of lines) processLine(l);
-			});
-			proc.stderr.on("data", (d) => {
-				result.stderr += d.toString();
-			});
-			proc.on("close", (code) => {
-				if (buffer.trim()) processLine(buffer);
-				result.exitCode = code ?? 0;
-				resolve();
-			});
-			proc.on("error", (err) => {
-				result.stderr += `\n[spawn error] ${err.message}`;
-				result.exitCode = 1;
-				resolve();
-			});
+	await new Promise<void>((resolve) => {
+		const inv = getPiInvocation(args);
+		const proc = spawn(inv.command, inv.args, {
+			cwd: opts.repoRoot,
+			shell: false,
+			stdio: ["ignore", "pipe", "pipe"],
 		});
-		return result;
-	} finally {
-		try {
-			fs.rmSync(tmpDir, { recursive: true, force: true });
-		} catch {
-			/* ignore */
-		}
-	}
+		let buffer = "";
+
+		const processLine = (line: string) => {
+			if (!line.trim()) return;
+			let event: any;
+			try {
+				event = JSON.parse(line);
+			} catch {
+				return;
+			}
+			if (event.type === "message_end" && event.message?.role === "assistant") {
+				const msg = event.message;
+				result.turns++;
+				let text = "";
+				let lastTool: string | undefined;
+				for (const part of msg.content ?? []) {
+					if (part.type === "text") text += part.text;
+					else if (part.type === "toolCall") lastTool = part.name;
+				}
+				if (text.trim()) result.finalText = text; // keep the latest substantive assistant text
+				if (msg.stopReason) result.stopReason = msg.stopReason;
+				if (msg.errorMessage) result.errorMessage = msg.errorMessage;
+				opts.onProgress?.(result.turns, lastTool);
+			}
+		};
+
+		proc.stdout.on("data", (d) => {
+			buffer += d.toString();
+			const lines = buffer.split("\n");
+			buffer = lines.pop() ?? "";
+			for (const l of lines) processLine(l);
+		});
+		proc.stderr.on("data", (d) => {
+			result.stderr += d.toString();
+		});
+		proc.on("close", (code) => {
+			if (buffer.trim()) processLine(buffer);
+			result.exitCode = code ?? 0;
+			resolve();
+		});
+		proc.on("error", (err) => {
+			result.stderr += `\n[spawn error] ${err.message}`;
+			result.exitCode = 1;
+			resolve();
+		});
+	});
+	return result;
 }
 
 function subagentFailed(r: SubagentResult): boolean {
@@ -468,6 +470,7 @@ export default function subagents(pi: ExtensionAPI) {
 					agentsPath: repo.agents,
 					promptBodyPath: repo.planPrompt,
 					tools: "read,grep,find,ls,write",
+					model: MODEL_DEFAULT, // Phase 0.5: Planner runs on Opus 4.8 (xhigh)
 					userTurn,
 					onProgress: (turns, lastTool) =>
 						ctx.ui.setStatus("subagents", `planner: turn ${turns}${lastTool ? ` (${lastTool})` : ""}…`),
@@ -592,6 +595,7 @@ export default function subagents(pi: ExtensionAPI) {
 					promptBodyPath: repo.verifyPrompt,
 					tools: "read,grep,find,ls,run_check,write",
 					runnerPath: RUNNER_PATH,
+					model: MODEL_REVIEW, // Phase 0.5: Verifier (reviewer class) runs on GPT-5.5 (xhigh)
 					userTurn,
 					onProgress: (turns, lastTool) =>
 						ctx.ui.setStatus("subagents", `verifier: turn ${turns}${lastTool ? ` (${lastTool})` : ""}…`),
