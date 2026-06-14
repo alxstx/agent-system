@@ -58,6 +58,10 @@ const EFFORT = "xhigh";
 const MODEL_DEFAULT = "anthropic/opus-4.8"; // plan, monitor, triage, research, report
 const MODEL_REVIEW = "openai/gpt-5.5"; // the reviewing/adversarial-judge agents (verify)
 
+// Module-scope monotonic counter for collision-resistant /monitor run ids (a ms timestamp can
+// still collide within the same millisecond; the counter disambiguates).
+let monitorSeq = 0;
+
 // Build the human-readable list of checks a runner-backed sub-agent is allowed to run, derived
 // from <repoRoot>/harness/checks.json (project-specific checks + test-file) plus the universal git
 // checks and the read-only /triage probes. GIT_CHECKS/READONLY_PROBES are imported from the shared
@@ -74,6 +78,24 @@ function listVerifyChecks(repoRoot: string): string {
 	}
 	names.push(...GIT_CHECKS, ...READONLY_PROBES);
 	return names.join(", ");
+}
+
+interface ExperimentEntry {
+	cmd: string;
+	args: string[];
+	timeoutMs: number;
+}
+
+// Read the closed allowlist of experiments the Monitor may launch (names only; the model never
+// assembles a command). The runner enforces the same set via run_experiment's StringEnum.
+function listExperiments(repoRoot: string): Record<string, ExperimentEntry> {
+	try {
+		const raw = fs.readFileSync(path.join(repoRoot, "harness", "checks.json"), "utf-8");
+		const cfg = JSON.parse(raw) as { experiments?: Record<string, ExperimentEntry> };
+		return cfg.experiments ?? {};
+	} catch {
+		return {};
+	}
 }
 
 function handoffPlan(planPath: string, tasksPath: string, isNewFeature: boolean): string {
@@ -126,6 +148,21 @@ function handoffTriage(triagePath: string, verifyChecks: string): string {
 		"- Use probes to CONFIRM hypotheses, never to try fixes. Load surrounding code with read/grep/find/ls; do not dump the repo.",
 		"- The ONLY file you may write is the triage file above. Do not write or edit anything else.",
 		"- AFTER the file is written, your final message must be a line exactly `## SUMMARY` whose FIRST token is the top hypothesis label (an uppercase tag), followed by AT MOST 10 lines. Nothing else after it.",
+		"- The harness reads the file you wrote and surfaces only the SUMMARY to the main session.",
+	].join("\n");
+}
+
+function handoffMonitor(reportPath: string, expName: string, runId: string, logRel: string): string {
+	return [
+		"---",
+		"HARNESS HANDOFF (read this):",
+		"- You have read AND write tools + the run_experiment tool. You did NOT write this experiment; do not try to make it pass — report what actually happened.",
+		`- Launch the experiment EXACTLY once: run_experiment({ experiment: "${expName}", runId: "${runId}" }) — pass BOTH args verbatim. There is no shell; you cannot change the command.`,
+		`- Watch the streamed output (already redacted). The full stream is tee'd to ${logRel}; cite every error as ${logRel}:<line>.`,
+		`- Write your COMPLETE report as a markdown document to this exact file with the write tool: ${reportPath}`,
+		"- Report sections: Command (exact argv) · Duration (and whether it hit the cap) · Exit status · Detected errors (each with a log:line citation + excerpt + classification) · Verdict GREEN or RED. Make it standalone.",
+		"- The ONLY file you may write is the report file above. Do NOT write or edit anything else (NOT memory/MEMORY.md). If you found a durable lesson (a real flaky signature), name it in your SUMMARY.",
+		"- AFTER the file is written, your final message must be a line exactly `## SUMMARY` whose FIRST token is OK or ERROR, followed by AT MOST 10 lines. Nothing else after it.",
 		"- The harness reads the file you wrote and surfaces only the SUMMARY to the main session.",
 	].join("\n");
 }
@@ -762,6 +799,115 @@ export default function subagents(pi: ExtensionAPI) {
 				{ deliverAs: "nextTurn" },
 			);
 			ctx.ui.notify(`Triage: ${topLabel} — written to memory/triage-${slug}.md`, "info");
+		},
+	});
+
+	pi.registerCommand("monitor", {
+		description:
+			"Monitor subagent (allowlisted experiment runner, isolated) -> runs one experiment, watches for errors, writes memory/monitor-<run>.md, returns OK/ERROR",
+		handler: async (args: string, ctx: ExtensionCommandContext) => {
+			const raw = args.trim();
+			const firstSpace = raw.search(/\s/);
+			const expName = (firstSpace === -1 ? raw : raw.slice(0, firstSpace)).trim();
+			const note = firstSpace === -1 ? "" : raw.slice(firstSpace + 1).trim();
+			if (!expName) {
+				ctx.ui.notify("Usage: /monitor <experiment-name> [note]", "warning");
+				return;
+			}
+			const repo = findRepoRoot(ctx.cwd);
+			if (!repo) {
+				ctx.ui.notify(
+					"Not inside the harness repo (need harness/prompts/monitor.md + memory/MEMORY.md above cwd).",
+					"error",
+				);
+				return;
+			}
+
+			const experiments = listExperiments(repo.root);
+			const exp = experiments[expName];
+			if (!exp) {
+				const allowed = Object.keys(experiments).join(", ") || "(none configured in harness/checks.json)";
+				ctx.ui.notify(`Unknown experiment '${expName}'. Allowed: ${allowed}`, "error");
+				return;
+			}
+
+			// Collision-resistant run id: full ms timestamp + a monotonic per-process suffix.
+			// (new Date() is fine in real extension code; only the Workflow scripting sandbox forbids it.)
+			const stamp = new Date().toISOString().replace(/[-:T]/g, "").replace("Z", "").replace(".", ""); // YYYYMMDDHHMMSSmmm
+			const run = `${slugify(expName)}-${stamp}-${(monitorSeq++).toString(36)}`; // matches ^[A-Za-z0-9._-]{1,80}$
+			const reportPath = path.join(repo.memoryDir, `monitor-${run}.md`);
+			const logRel = `memory/runs/${run}.log`;
+			fs.mkdirSync(path.join(repo.memoryDir, "runs"), { recursive: true });
+
+			const memory = readIfExists(repo.memory) ?? "(memory/MEMORY.md missing)";
+			const userTurn = [
+				"# Current memory index (memory/MEMORY.md)",
+				memory,
+				"---",
+				`# Experiment to run: ${expName}`,
+				"```",
+				`${exp.cmd} ${exp.args.join(" ")}`,
+				"```",
+				`(fixed command from harness/checks.json — you cannot change it; timeout ${Math.round(exp.timeoutMs / 1000)}s)`,
+				`# Run id (pass this verbatim as run_experiment's runId): ${run}`,
+				`(per-run log will be at ${logRel})`,
+				...(note ? ["---", "# Operator note", note] : []),
+				"",
+				handoffMonitor(reportPath, expName, run, logRel),
+			].join("\n\n");
+
+			ctx.ui.setStatus("subagents", `monitor: starting ${expName}…`);
+			const sigBefore = fileSig(reportPath);
+			let res: SubagentResult;
+			try {
+				res = await runSubagent({
+					repoRoot: repo.root,
+					agentsPath: repo.agents,
+					promptBodyPath: path.join(repo.root, "harness", "prompts", "monitor.md"),
+					tools: "read,grep,find,ls,run_experiment,write",
+					runnerPath: RUNNER_PATH,
+					model: MODEL_DEFAULT, // Phase 0.5: observer class -> Opus 4.8 (xhigh)
+					userTurn,
+					onProgress: (turns, lastTool) =>
+						ctx.ui.setStatus("subagents", `monitor: turn ${turns}${lastTool ? ` (${lastTool})` : ""}…`),
+				});
+			} finally {
+				ctx.ui.setStatus("subagents", "");
+			}
+
+			if (subagentFailed(res)) {
+				const why = res.errorMessage || res.stopReason || res.stderr.trim() || "no output";
+				ctx.ui.notify(`Monitor failed: ${why}`, "error");
+				pi.sendMessage(
+					{
+						customType: "subagent-monitor",
+						content: `Monitor FAILED (${res.stopReason ?? `exit ${res.exitCode}`}): ${why}`,
+						display: true,
+					},
+					{ deliverAs: "nextTurn" },
+				);
+				return;
+			}
+
+			const wroteItself = fileSig(reportPath) !== sigBefore && (readIfExists(reportPath)?.trim()?.length ?? 0) > 0;
+			if (!wroteItself) {
+				fs.writeFileSync(reportPath, res.finalText.endsWith("\n") ? res.finalText : `${res.finalText}\n`, "utf-8");
+			}
+			const summary = extractSummary(res.finalText, 10);
+			const verdictWord = /^\s*ERROR\b/i.test(summary) ? "ERROR" : "OK";
+			pi.sendMessage(
+				{
+					customType: "subagent-monitor",
+					content: `Monitor verdict (${expName}, ${res.turns} turns):\n\n${summary}\n\nFull report -> memory/monitor-${run}.md\nLog -> ${logRel}`,
+					display: true,
+					details: { verdict: verdictWord, experiment: expName, runId: run },
+				},
+				{ deliverAs: "nextTurn" },
+			);
+			ctx.ui.notify(
+				`Monitor: ${verdictWord} — written to memory/monitor-${run}.md`,
+				verdictWord === "ERROR" ? "warning" : "info",
+			);
 		},
 	});
 }

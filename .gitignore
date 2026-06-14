@@ -7,5 +7,8 @@ Thumbs.db
 node_modules/
 *.log
 
+# /monitor per-run experiment logs (defense-in-depth; *.log above already covers .log files)
+memory/runs/
+
 # Dev-only typecheck workspace lockfile (deps pinned in harness/pi/package.json; npm install regenerates)
 harness/pi/package-lock.json

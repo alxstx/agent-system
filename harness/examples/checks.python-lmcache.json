@@ -35,5 +35,10 @@
     "spell": { "cmd": "codespell", "args": ["--toml", "pyproject.toml"], "timeoutMs": 300000 },
     "precommit": { "cmd": "pre-commit", "args": ["run", "--all-files"], "timeoutMs": 900000 },
     "docs-build": { "cmd": "make", "args": ["-C", "docs", "html"], "timeoutMs": 900000 }
+  },
+  "boundaries": ["(^|/)migrations/", "(^|/)\\.venv/", "(^|/)dist/", "\\.generated\\."],
+  "experiments": {
+    "smoke-bench": { "cmd": "python", "args": ["bench/run.py", "--config", "configs/smoke.yaml"], "timeoutMs": 1800000 },
+    "lmcache-throughput": { "cmd": "python", "args": ["bench/throughput.py", "--duration", "600"], "timeoutMs": 900000 }
   }
 }

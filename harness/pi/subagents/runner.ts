@@ -28,6 +28,8 @@
  * never runs anything off the list.
  */
 
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { AgentToolUpdateCallback, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -39,8 +41,11 @@ import {
 	loadConfig,
 	resolveCheck,
 	runFixed,
+	runFixedTee,
 	tail,
+	validateLogFile,
 } from "../shared/checks-core.js";
+import { loadRedactor } from "../shared/redact.js";
 
 // The Verifier subprocess is spawned with cwd = repoRoot, so process.cwd() is the repo.
 // Resolve config once at module load to build the allowlist for the tool schema.
@@ -113,6 +118,97 @@ function registerRunCheck(pi: ExtensionAPI) {
 	});
 }
 
+// run_experiment — the structural twin of run_check for /monitor: launch ONE allowlisted
+// long-lived experiment (fixed argv, shell:false), stream it back, and tee the (redacted) output
+// to a per-RUN log memory/runs/<runId>.log. Registered as a HELPER called from the SINGLE default
+// export — never a second `export default`, which would drop run_check.
+function registerRunExperiment(pi: ExtensionAPI) {
+	const expNames = Object.keys(CONFIG.experiments);
+	// Do NOT register when no experiments are configured: this runner is loaded by /verify in EVERY
+	// harnessed repo, most of which have no experiments -> StringEnum([]) would be an empty enum.
+	// (StringEnum([]) does not throw at construction, but registering a tool the model can never call
+	// correctly is pointless; guarding keeps run_check clean where there are no experiments.)
+	if (expNames.length === 0) return;
+
+	pi.registerTool({
+		name: "run_experiment",
+		label: "Run Experiment",
+		description: [
+			"Launch ONE allowlisted long-lived experiment (no shell, fixed command).",
+			`Allowed: ${expNames.join(", ")}.`,
+			"Output streams back live (secrets redacted) and is tee'd to memory/runs/<runId>.log. Any other command is refused.",
+		].join(" "),
+		parameters: Type.Object({
+			experiment: StringEnum(expNames, { description: "Which allowlisted experiment to launch" }),
+			runId: Type.String({ description: "Run id from your handoff (names the per-run log memory/runs/<runId>.log)" }),
+		}),
+		async execute(_id, params, signal, onUpdate, ctx) {
+			const repoRoot = ctx.cwd;
+			const name = params.experiment as string;
+			const spec = CONFIG.experiments[name];
+			if (!spec) {
+				return {
+					content: [{ type: "text", text: `Refused: '${name}' is not an allowed experiment.` }],
+					details: { experiment: name, refused: true },
+					isError: true,
+				};
+			}
+			// Validate the runId to a safe slug (no traversal), then derive the per-run log path.
+			const runId = String((params as { runId?: unknown }).runId ?? "").trim();
+			if (!/^[A-Za-z0-9._-]{1,80}$/.test(runId)) {
+				return {
+					content: [{ type: "text", text: `Refused: runId must match ^[A-Za-z0-9._-]{1,80}$ (got '${runId}')` }],
+					details: { experiment: name, refused: true },
+					isError: true,
+				};
+			}
+			const logRel = `memory/runs/${runId}.log`; // per-RUN, not per-experiment
+			const v = validateLogFile(repoRoot, logRel);
+			if (!v.ok) {
+				return {
+					content: [{ type: "text", text: `Refused: ${v.reason}` }],
+					details: { experiment: name, refused: true },
+					isError: true,
+				};
+			}
+			fs.mkdirSync(path.dirname(v.abs), { recursive: true });
+
+			// runFixedTee redacts the stream BEFORE both the agent-visible onUpdate AND the disk tee,
+			// so memory/runs/<runId>.log is scrubbed at the source (a main-session hook can't reach this
+			// subprocess). The redactor is the SAME shared loadRedactor the secret-redaction hook uses.
+			const redact = loadRedactor(repoRoot);
+			const outcome = await runFixedTee(
+				repoRoot,
+				CONFIG,
+				spec.cmd,
+				spec.args,
+				spec.timeoutMs,
+				v.abs,
+				redact,
+				signal,
+				onUpdate as AgentToolUpdateCallback<unknown> | undefined,
+			);
+
+			const status = outcome.timedOut
+				? `TIMED OUT after ${Math.round(spec.timeoutMs / 1000)}s`
+				: outcome.exitCode === 0
+					? "exit 0 (clean)"
+					: `exit ${outcome.exitCode ?? "?"}${outcome.signal ? ` (signal ${outcome.signal})` : ""}`;
+
+			// Redact the echoed cmdline too (defense-in-depth: experiment argv is operator config and
+			// should not hold secrets, but if it did, scrub it from the agent-visible output).
+			const text = `$ ${redact(outcome.cmdline)}\n[${status}] (full log: ${logRel})\n\n${tail(outcome.output) || "(no output)"}`;
+			return {
+				content: [{ type: "text", text }],
+				details: { experiment: name, exitCode: outcome.exitCode, timedOut: outcome.timedOut, logFile: logRel, cmdline: outcome.cmdline },
+				// NOT isError on a non-zero exit: the experiment "ran" successfully as a tool call; it is
+				// the Monitor's job (and the report's verdict) to classify a crash as RED.
+			};
+		},
+	});
+}
+
 export default function verifierRunner(pi: ExtensionAPI) {
 	registerRunCheck(pi);
+	registerRunExperiment(pi);
 }

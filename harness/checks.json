@@ -16,5 +16,9 @@
   "checks": {
     "test": { "cmd": "echo", "args": ["replace with your test command, e.g. pytest -q"], "timeoutMs": 1200000 },
     "lint": { "cmd": "echo", "args": ["replace with your lint command, e.g. ruff check ."], "timeoutMs": 300000 }
+  },
+  "$experiments-note": "Closed allowlist of long-lived experiments the /monitor sub-agent may launch via run_experiment. Each maps to a FIXED argv (cmd/args/timeoutMs) run with shell:false; the model picks a NAME, never a command. NO logFile field — the log path is per-RUN (memory/runs/<runId>.log). Replace the example below with your project's real benchmarks/long runs.",
+  "experiments": {
+    "smoke": { "cmd": "echo", "args": ["replace with your experiment command, e.g. python bench/run.py --config configs/smoke.yaml"], "timeoutMs": 1800000 }
   }
 }
