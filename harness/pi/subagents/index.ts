@@ -469,6 +469,63 @@ function computeDiff(repoRoot: string): { text: string; label: string } {
 	return { text: out, label };
 }
 
+// Sibling of computeDiff for /report: the recent commit log (the report contract references both
+// diff AND log, and no git-log helper existed). Same base resolution + truncation.
+function computeGitLog(repoRoot: string): { text: string; label: string } {
+	const tryLog = (base: string): string | null => {
+		const r = spawnSync("git", ["log", "--oneline", "-40", `${base}..HEAD`], {
+			cwd: repoRoot,
+			encoding: "utf-8",
+			maxBuffer: 64 * 1024 * 1024,
+		});
+		if (r.status === 0) return r.stdout ?? "";
+		return null;
+	};
+	let label = "git log main..HEAD";
+	let out = tryLog("main");
+	if (out === null) {
+		label = "git log HEAD~1..HEAD";
+		out = tryLog("HEAD~1");
+	}
+	if (out === null) {
+		return { text: "(unable to compute a git log: no 'main' or 'HEAD~1' base found)", label: "no base" };
+	}
+	if (!out.trim()) return { text: `(no commits vs ${label.replace("git log ", "").replace("..HEAD", "")})`, label };
+	if (Buffer.byteLength(out, "utf-8") > MAX_DIFF_BYTES) {
+		out = `${out.slice(0, MAX_DIFF_BYTES)}\n\n[log truncated at ${MAX_DIFF_BYTES} bytes]`;
+	}
+	return { text: out, label };
+}
+
+// Newest memory/monitor-*.md (by mtime), for /report's source auto-discovery.
+function newestMonitorReport(memoryDir: string): string | undefined {
+	try {
+		const candidates = fs
+			.readdirSync(memoryDir)
+			.filter((f) => /^monitor-.+\.md$/.test(f))
+			.map((f) => ({ f, m: fs.statSync(path.join(memoryDir, f)).mtimeMs }))
+			.sort((a, b) => b.m - a.m);
+		return candidates.length ? path.join(memoryDir, candidates[0].f) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function handoffReport(reportPath: string, audience: string): string {
+	return [
+		"---",
+		"HARNESS HANDOFF (read this):",
+		"- You have read AND write tools. You compose; you run nothing and you fix nothing.",
+		`- Write your COMPLETE report as a polished markdown document to this exact file with the write tool: ${reportPath}`,
+		`- Audience: ${audience}. Tune register/length to it (team: result + next steps; paper: neutral, method+limits forward, no first person; self: terse lab-notebook).`,
+		"- Lead with the result; quantify every claim; cite each figure as file:line / log:line into the artifacts above; be honest about caveats; no marketing fluff.",
+		"- Load more detail from the cited artifacts with read/grep as needed. If you can't cite it, don't claim it.",
+		"- The ONLY file you may write is the report file above. Do NOT write or edit anything else (NOT memory/MEMORY.md). If a durable lesson emerged, name it in your SUMMARY.",
+		"- AFTER the file is written, your final message must be a line exactly `## SUMMARY` followed by AT MOST 10 lines: the one-line headline result, the 2–4 facts a reader most needs, then the report path. Nothing else after it.",
+		"- The harness reads the file you wrote and surfaces only the SUMMARY; the DOCUMENT is the deliverable and lives on disk.",
+	].join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -908,6 +965,136 @@ export default function subagents(pi: ExtensionAPI) {
 				`Monitor: ${verdictWord} — written to memory/monitor-${run}.md`,
 				verdictWord === "ERROR" ? "warning" : "info",
 			);
+		},
+	});
+
+	pi.registerCommand("report", {
+		description:
+			"Report subagent (writer, isolated) -> composes a polished audience-facing document from memory/ artifacts into memory/reports/<subject>-<date>.md",
+		handler: async (args: string, ctx: ExtensionCommandContext) => {
+			const tokens = args.trim() ? args.trim().split(/\s+/) : [];
+			let audience = "team";
+			const rest: string[] = [];
+			for (const t of tokens) {
+				const m = /^--for=(team|paper|self)$/.exec(t);
+				if (m) {
+					audience = m[1];
+					continue;
+				}
+				rest.push(t);
+			}
+			const subjectRaw = rest.shift() ?? "";
+			const slug = slugify(subjectRaw);
+			if (!slug) {
+				ctx.ui.notify("Usage: /report <subject> [--for=team|paper|self] [sources...]", "warning");
+				return;
+			}
+			const repo = findRepoRoot(ctx.cwd);
+			if (!repo) {
+				ctx.ui.notify(
+					"Not inside the harness repo (need harness/prompts/report.md + memory/MEMORY.md above cwd).",
+					"error",
+				);
+				return;
+			}
+
+			// Gather source artifacts: explicit paths if given, else auto-discover the newest monitor
+			// report + the standard verdict/tasks artifacts. Missing/empty sources are skipped.
+			const sources: { label: string; content: string }[] = [];
+			const seen = new Set<string>();
+			const addSource = (relOrAbs: string) => {
+				const abs = path.resolve(repo.root, relOrAbs);
+				if (seen.has(abs)) return;
+				seen.add(abs);
+				const content = readIfExists(abs);
+				if (content && content.trim()) sources.push({ label: path.relative(repo.root, abs), content });
+			};
+			if (rest.length) {
+				for (const s of rest) addSource(s);
+			} else {
+				const newest = newestMonitorReport(repo.memoryDir);
+				if (newest) addSource(newest);
+				addSource("memory/verdict.md");
+				addSource("memory/tasks.md");
+			}
+
+			const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+			fs.mkdirSync(path.join(repo.memoryDir, "reports"), { recursive: true });
+			const reportRel = `memory/reports/${slug}-${date}.md`;
+			const reportPath = path.join(repo.root, reportRel);
+
+			const memory = readIfExists(repo.memory) ?? "(memory/MEMORY.md missing)";
+			const { text: diff, label: diffLabel } = computeDiff(repo.root);
+			const { text: gitlog, label: logLabel } = computeGitLog(repo.root);
+			const userTurn = [
+				"# Current memory index (memory/MEMORY.md)",
+				memory,
+				"---",
+				`# Report subject: ${slug}  (audience: ${audience})`,
+				...sources.flatMap((s) => ["---", `# Source: ${s.label}`, s.content]),
+				"---",
+				`# Change under review (${diffLabel})`,
+				"```diff",
+				diff,
+				"```",
+				"---",
+				`# Recent commits (${logLabel})`,
+				"```",
+				gitlog,
+				"```",
+				"",
+				handoffReport(reportPath, audience),
+			].join("\n\n");
+
+			ctx.ui.setStatus("subagents", `report: composing ${slug}…`);
+			const sigBefore = fileSig(reportPath);
+			let res: SubagentResult;
+			try {
+				res = await runSubagent({
+					repoRoot: repo.root,
+					agentsPath: repo.agents,
+					promptBodyPath: path.join(repo.root, "harness", "prompts", "report.md"),
+					tools: "read,grep,find,ls,write", // writer composes; no execution surface
+					model: MODEL_DEFAULT, // Phase 0.5: author class -> Opus 4.8 (xhigh)
+					userTurn,
+					onProgress: (turns, lastTool) =>
+						ctx.ui.setStatus("subagents", `report: turn ${turns}${lastTool ? ` (${lastTool})` : ""}…`),
+				});
+			} finally {
+				ctx.ui.setStatus("subagents", "");
+			}
+
+			if (subagentFailed(res)) {
+				const why = res.errorMessage || res.stopReason || res.stderr.trim() || "no output";
+				ctx.ui.notify(`Report failed: ${why}`, "error");
+				pi.sendMessage(
+					{
+						customType: "subagent-report",
+						content: `Report FAILED (${res.stopReason ?? `exit ${res.exitCode}`}): ${why}`,
+						display: true,
+					},
+					{ deliverAs: "nextTurn" },
+				);
+				return;
+			}
+
+			const wroteItself = fileSig(reportPath) !== sigBefore && (readIfExists(reportPath)?.trim()?.length ?? 0) > 0;
+			if (!wroteItself) {
+				fs.writeFileSync(reportPath, res.finalText.endsWith("\n") ? res.finalText : `${res.finalText}\n`, "utf-8");
+			}
+			const summary = extractSummary(res.finalText, 10);
+			// /report's contract inverts the others: the SUMMARY is an abstract, NOT a verdict — so the
+			// parent posts details:{audience}, not details:{verdict} (intentional asymmetry).
+			pi.sendMessage(
+				{
+					customType: "subagent-report",
+					content: `Report summary (${slug}, ${res.turns} turns):\n\n${summary}\n\nFull report -> ${reportRel}`,
+					display: true,
+					details: { audience },
+				},
+				{ deliverAs: "nextTurn" },
+			);
+			ctx.ui.notify(`Report written: ${reportRel}`, "info");
 		},
 	});
 }
