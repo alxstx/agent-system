@@ -40,9 +40,14 @@ export default function checks(pi: ExtensionAPI) {
 				// ctx.signal is undefined when no agent turn is active (command fired while idle); the
 				// optional chaining makes Esc-cancel a graceful no-op there and a real abort when present.
 				if (ctx.signal?.aborted) break;
-				const r = resolveCheck(cfg, repoRoot, name, undefined); // test-file needs a path -> refused in "all"
+				const r = resolveCheck(cfg, repoRoot, name, undefined); // test-file/probes need a path -> refused in "all"
 				if ("refused" in r) {
 					rows.push(`  ?  ${name.padEnd(14)} ${r.reason}`);
+					continue;
+				}
+				if ("inline" in r) {
+					// env-dump (TS read of process.env, no subprocess) — always "passes".
+					rows.push(`  ✓  ${name.padEnd(14)} ok (inline)`);
 					continue;
 				}
 				ctx.ui.setStatus("checks", `running ${name}…`);

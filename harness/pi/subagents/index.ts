@@ -43,6 +43,7 @@ import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { GIT_CHECKS, READONLY_PROBES } from "../shared/checks-core.js";
 
 const RUNNER_PATH = path.join(import.meta.dirname ?? __dirname, "runner.ts");
 
@@ -57,12 +58,10 @@ const EFFORT = "xhigh";
 const MODEL_DEFAULT = "anthropic/opus-4.8"; // plan, monitor, triage, research, report
 const MODEL_REVIEW = "openai/gpt-5.5"; // the reviewing/adversarial-judge agents (verify)
 
-// Universal git checks the Verifier can always run (mirrors runner.ts).
-const GIT_CHECKS = ["git-diff", "git-diff-stat", "git-status", "git-log"];
-
-// Build the human-readable list of checks the Verifier is allowed to run, derived
-// from <repoRoot>/harness/checks.json (project-specific checks + test-file) plus the
-// universal git checks. Kept in sync with runner.ts, which enforces the same set.
+// Build the human-readable list of checks a runner-backed sub-agent is allowed to run, derived
+// from <repoRoot>/harness/checks.json (project-specific checks + test-file) plus the universal git
+// checks and the read-only /triage probes. GIT_CHECKS/READONLY_PROBES are imported from the shared
+// core (runner.ts enforces the same set), so the prompt and the tool can never diverge.
 function listVerifyChecks(repoRoot: string): string {
 	const names: string[] = [];
 	try {
@@ -71,9 +70,9 @@ function listVerifyChecks(repoRoot: string): string {
 		if (cfg.checks) names.push(...Object.keys(cfg.checks));
 		if (cfg.testFile) names.push("test-file");
 	} catch {
-		/* no config: only git checks are available */
+		/* no config: only git checks + probes are available */
 	}
-	names.push(...GIT_CHECKS);
+	names.push(...GIT_CHECKS, ...READONLY_PROBES);
 	return names.join(", ");
 }
 
@@ -113,6 +112,32 @@ function handoffVerify(verdictPath: string, hasOverallPlan: boolean, verifyCheck
 		"- AFTER the file is written, your final message must be a line exactly `## SUMMARY` whose FIRST token is PASS, or `PASS WITH NITS`, or FAIL, followed by AT MOST 10 lines of the key findings. Nothing else after it.",
 		"- The harness reads the file you wrote and surfaces only the SUMMARY to the main session.",
 	].join("\n");
+}
+
+function handoffTriage(triagePath: string, verifyChecks: string): string {
+	return [
+		"---",
+		"HARNESS HANDOFF (read this):",
+		"- You have read AND write tools + the run_check probe tool, but you NEVER touch source code: you diagnose, you do not fix.",
+		`- Write your COMPLETE triage as a markdown document to this exact file with the write tool: ${triagePath}`,
+		"- Follow your output contract above (Failure · ranked Hypotheses with file:line evidence · ONE next probe · Ruled out). Make it a standalone report.",
+		`- To gather evidence, use the run_check tool. Allowed checks ONLY: ${verifyChecks}.`,
+		"  (Anything outside that set is refused. There is no general shell.)",
+		"- Use probes to CONFIRM hypotheses, never to try fixes. Load surrounding code with read/grep/find/ls; do not dump the repo.",
+		"- The ONLY file you may write is the triage file above. Do not write or edit anything else.",
+		"- AFTER the file is written, your final message must be a line exactly `## SUMMARY` whose FIRST token is the top hypothesis label (an uppercase tag), followed by AT MOST 10 lines. Nothing else after it.",
+		"- The harness reads the file you wrote and surfaces only the SUMMARY to the main session.",
+	].join("\n");
+}
+
+// Read a file capped to MAX_DIFF_BYTES (the same truncation idiom computeDiff uses), for
+// injecting an operator-supplied log into a sub-agent's first turn.
+function readCapped(p: string): string {
+	let out = readIfExists(p) ?? "";
+	if (Buffer.byteLength(out, "utf-8") > MAX_DIFF_BYTES) {
+		out = `${out.slice(0, MAX_DIFF_BYTES)}\n\n[log truncated at ${MAX_DIFF_BYTES} bytes]`;
+	}
+	return out;
 }
 
 // mtime+size signature so the parent can tell whether the subagent wrote the file itself.
@@ -636,6 +661,107 @@ export default function subagents(pi: ExtensionAPI) {
 				{ deliverAs: "nextTurn" },
 			);
 			ctx.ui.notify(`Verifier: ${verdictWord} — written to memory/verdict.md`, verdictWord === "FAIL" ? "warning" : "info");
+		},
+	});
+
+	pi.registerCommand("triage", {
+		description:
+			"Triage subagent (allowlisted read-only probes, isolated) -> ranks root-cause hypotheses + one next probe, writes memory/triage-<id>.md",
+		handler: async (args: string, ctx: ExtensionCommandContext) => {
+			const repo = findRepoRoot(ctx.cwd);
+			if (!repo) {
+				ctx.ui.notify(
+					"Not inside the harness repo (need harness/prompts/triage.md + memory/MEMORY.md above cwd).",
+					"error",
+				);
+				return;
+			}
+			const raw = args.trim();
+			const tokens = raw ? raw.split(/\s+/) : [];
+			// First token may be a log path under the repo; otherwise the whole arg is the note.
+			let logText = "";
+			let logLabel = "";
+			let note = raw;
+			let idSeed = "";
+			if (tokens.length) {
+				const candidate = path.resolve(repo.root, tokens[0]);
+				const inRepo = candidate === repo.root || candidate.startsWith(repo.root + path.sep);
+				if (inRepo && fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+					logText = readCapped(candidate);
+					logLabel = tokens[0];
+					note = tokens.slice(1).join(" ").trim();
+					idSeed = tokens[0];
+				}
+			}
+			if (!logText && !note) {
+				ctx.ui.notify("Usage: /triage [<log-path>] [note: stderr/traceback or a hint]", "warning");
+				return;
+			}
+
+			const firstLogLine = logText.split("\n").find((l) => l.trim()) ?? "";
+			const slug = slugify(idSeed || firstLogLine || note) || `triage-${Date.now().toString(36)}`;
+			const triagePath = path.join(repo.memoryDir, `triage-${slug}.md`);
+			const memory = readIfExists(repo.memory) ?? "(memory/MEMORY.md missing)";
+			const userTurn = [
+				"# Current memory index (memory/MEMORY.md)",
+				memory,
+				"---",
+				`# Triage id: ${slug}`,
+				...(logText ? ["---", `# Failing log (${logLabel})`, "```", logText, "```"] : []),
+				...(note ? ["---", "# Operator note", note] : []),
+				"",
+				handoffTriage(triagePath, listVerifyChecks(repo.root)),
+			].join("\n\n");
+
+			ctx.ui.setStatus("subagents", "triage: starting…");
+			const sigBefore = fileSig(triagePath);
+			let res: SubagentResult;
+			try {
+				res = await runSubagent({
+					repoRoot: repo.root,
+					agentsPath: repo.agents,
+					promptBodyPath: path.join(repo.root, "harness", "prompts", "triage.md"),
+					tools: "read,grep,find,ls,run_check,write",
+					runnerPath: RUNNER_PATH,
+					model: MODEL_DEFAULT, // Phase 0.5: diagnostic/observer class -> Opus 4.8 (xhigh)
+					userTurn,
+					onProgress: (turns, lastTool) =>
+						ctx.ui.setStatus("subagents", `triage: turn ${turns}${lastTool ? ` (${lastTool})` : ""}…`),
+				});
+			} finally {
+				ctx.ui.setStatus("subagents", "");
+			}
+
+			if (subagentFailed(res)) {
+				const why = res.errorMessage || res.stopReason || res.stderr.trim() || "no output";
+				ctx.ui.notify(`Triage failed: ${why}`, "error");
+				pi.sendMessage(
+					{
+						customType: "subagent-triage",
+						content: `Triage FAILED (${res.stopReason ?? `exit ${res.exitCode}`}): ${why}`,
+						display: true,
+					},
+					{ deliverAs: "nextTurn" },
+				);
+				return;
+			}
+
+			const wroteItself = fileSig(triagePath) !== sigBefore && (readIfExists(triagePath)?.trim()?.length ?? 0) > 0;
+			if (!wroteItself) {
+				fs.writeFileSync(triagePath, res.finalText.endsWith("\n") ? res.finalText : `${res.finalText}\n`, "utf-8");
+			}
+			const summary = extractSummary(res.finalText, 10);
+			const topLabel = summary.split("\n")[0]?.trim().split(/\s+/)[0] || "TRIAGE";
+			pi.sendMessage(
+				{
+					customType: "subagent-triage",
+					content: `Triage summary (${res.turns} turns):\n\n${summary}\n\nFull triage -> memory/triage-${slug}.md`,
+					display: true,
+					details: { hypothesis: topLabel },
+				},
+				{ deliverAs: "nextTurn" },
+			);
+			ctx.ui.notify(`Triage: ${topLabel} — written to memory/triage-${slug}.md`, "info");
 		},
 	});
 }

@@ -34,6 +34,7 @@ import { Type } from "typebox";
 import {
 	allCheckNames,
 	type ChecksConfig,
+	envDump,
 	findRepoRoot,
 	loadConfig,
 	resolveCheck,
@@ -63,7 +64,9 @@ function registerRunCheck(pi: ExtensionAPI) {
 		parameters: Type.Object({
 			check: StringEnum(checkNames as string[], { description: "Which allowlisted check to run" }),
 			path: Type.Optional(
-				Type.String({ description: "target under the test root (only for check='test-file')" }),
+				Type.String({
+					description: "file path for check='test-file' (under the test root), 'git-blame', or 'git-log-file'",
+				}),
 			),
 		}),
 		async execute(_id, params, signal, onUpdate, ctx) {
@@ -77,6 +80,10 @@ function registerRunCheck(pi: ExtensionAPI) {
 					details: { check, refused: true },
 					isError: true,
 				};
+			}
+			if ("inline" in resolved) {
+				// env-dump: an allowlisted-prefix slice of process.env, no subprocess.
+				return { content: [{ type: "text", text: envDump() }], details: { check }, isError: false };
 			}
 
 			const outcome = await runFixed(

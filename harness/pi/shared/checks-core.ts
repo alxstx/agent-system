@@ -24,6 +24,14 @@ export const MAX_OUTPUT_BYTES = 30 * 1024;
 export const GIT_CHECKS = ["git-diff", "git-diff-stat", "git-status", "git-log"] as const;
 export type GitCheck = (typeof GIT_CHECKS)[number];
 
+// Read-only diagnostic probes for /triage (also available to any run_check caller). git-blame /
+// git-log-file take a validated free-text path; env-dump reads an allowlisted-prefix slice of
+// process.env in TS with NO subprocess (nothing to escape, no secrets — only PYTHON*/CUDA*/etc).
+export const READONLY_PROBES = ["git-blame", "git-log-file", "env-dump"] as const;
+const DEFAULT_BLAME_PATH_REGEX = "^[A-Za-z0-9_./-]+$";
+// Allowlisted env prefixes env-dump may surface (diagnostic, non-secret by construction).
+const ENV_DUMP_PREFIXES = ["PYTHON", "CUDA", "VIRTUAL_ENV", "PATH", "LANG"];
+
 // ---------------------------------------------------------------------------
 // Config (harness/checks.json) — the project-specific check definitions.
 // ---------------------------------------------------------------------------
@@ -57,6 +65,8 @@ export interface ChecksConfig {
 	testFile?: TestFileSpec;
 	checks: Record<string, FixedCheck>;
 	experiments: Record<string, ExperimentSpec>;
+	/** Optional override for the git-blame / git-log-file path validation regex (/triage probes). */
+	blamePathRegex?: string;
 }
 
 // Walk up from a starting dir to the repo root: the first ancestor that has a
@@ -88,6 +98,7 @@ export function loadConfig(repoRoot: string): ChecksConfig {
 			testFile: parsed.testFile,
 			checks: parsed.checks ?? {},
 			experiments: parsed.experiments ?? {},
+			blamePathRegex: parsed.blamePathRegex,
 		};
 	} catch {
 		return empty;
@@ -99,6 +110,7 @@ export function allCheckNames(cfg: ChecksConfig): string[] {
 	const names = [...Object.keys(cfg.checks)];
 	if (cfg.testFile) names.push("test-file");
 	names.push(...GIT_CHECKS);
+	names.push(...READONLY_PROBES);
 	return names;
 }
 
@@ -162,6 +174,42 @@ export function validateTestPath(
 	return { ok: true, rel: raw };
 }
 
+// Validate a free-text path for the git-blame / git-log-file probes (clone of validateTestPath):
+// config-supplied regex, no '..', must resolve under the repo root, must exist.
+export function validateProbePath(
+	repoRoot: string,
+	regexStr: string,
+	p: string,
+): { ok: true; rel: string } | { ok: false; reason: string } {
+	const raw = p.trim();
+	if (!raw) return { ok: false, reason: "empty path" };
+	let re: RegExp;
+	try {
+		re = new RegExp(regexStr);
+	} catch {
+		return { ok: false, reason: "invalid blamePathRegex in harness/checks.json" };
+	}
+	if (!re.test(raw)) return { ok: false, reason: `path must match ${regexStr} (no shell metacharacters)` };
+	if (raw.includes("..")) return { ok: false, reason: "'..' is not allowed" };
+	const resolved = path.resolve(repoRoot, raw);
+	if (resolved !== repoRoot && !resolved.startsWith(repoRoot + path.sep)) {
+		return { ok: false, reason: "path must stay within the repo" };
+	}
+	if (!fs.existsSync(resolved)) return { ok: false, reason: `no such file: ${raw}` };
+	return { ok: true, rel: raw };
+}
+
+// env-dump: an allowlisted-prefix slice of process.env, read in TS (NO subprocess). Surfaces only
+// diagnostic, non-secret vars (PYTHON*/CUDA*/VIRTUAL_ENV/PATH/LANG) so there is nothing to escape.
+export function envDump(): string {
+	const lines: string[] = [];
+	for (const [k, v] of Object.entries(process.env)) {
+		if (ENV_DUMP_PREFIXES.some((pre) => k === pre || k.startsWith(pre))) lines.push(`${k}=${v ?? ""}`);
+	}
+	lines.sort();
+	return lines.join("\n") || "(no matching env vars)";
+}
+
 // Confine a per-run experiment log to <repoRoot>/memory/runs/ (no traversal).
 export function validateLogFile(
 	repoRoot: string,
@@ -186,10 +234,21 @@ export function resolveCheck(
 	repoRoot: string,
 	check: string,
 	p?: string,
-): { cmd: string; args: string[]; timeoutMs: number } | { refused: true; reason: string } {
+): { cmd: string; args: string[]; timeoutMs: number } | { inline: "env-dump" } | { refused: true; reason: string } {
 	if ((GIT_CHECKS as readonly string[]).includes(check)) {
 		const base = resolveGitBase(repoRoot, cfg.diffBases);
 		return gitCheckSpec(check as GitCheck, base);
+	}
+	// Read-only /triage probes.
+	if (check === "env-dump") return { inline: "env-dump" };
+	if (check === "git-blame" || check === "git-log-file") {
+		const v = validateProbePath(repoRoot, cfg.blamePathRegex ?? DEFAULT_BLAME_PATH_REGEX, p ?? "");
+		if (!v.ok) return { refused: true, reason: v.reason };
+		const args =
+			check === "git-blame"
+				? ["blame", "-L", "1,40", "--", v.rel] // line-capped so output stays bounded
+				: ["log", "--oneline", "-10", "--", v.rel];
+		return { cmd: "git", args, timeoutMs: 60_000 };
 	}
 	if (check === "test-file") {
 		if (!cfg.testFile) return { refused: true, reason: "'test-file' is not configured in harness/checks.json." };
