@@ -1,0 +1,9 @@
+{
+  "$note": "MCP config TEMPLATE for the pi-mcp-adapter. pi has no native MCP support; the adapter adds it. ONE server is in scope for this harness: the arXiv research server (read-only, zero-key). To enable it: (1) install the adapter once -> `pi install npm:pi-mcp-adapter`; (2) install the arXiv server once -> `uv tool install 'arxiv-mcp-server[pdf]'`; (3) copy THIS file to a pi-scanned load path -> `.pi/mcp.json` (project-local) or `~/.pi/agent/mcp.json` (global) -- NOT harness/mcp.json, which pi does not scan. Then `/mcp` lists arxiv and the model can call search_papers/read_paper. The mcpServers wrapper key is the Claude-Code-compatible form the adapter expects.",
+  "mcpServers": {
+    "arxiv": {
+      "command": "uv",
+      "args": ["tool", "run", "arxiv-mcp-server", "--storage-path", "${HOME}/papers"]
+    }
+  }
+}
