@@ -1,6 +1,7 @@
 {
-  "$schema-note": "Per-repo verifier config for the pi subagents engine (harness/pi/subagents). The Verifier may run ONLY the named checks defined here plus the always-available git checks (git-diff, git-diff-stat, git-status, git-log). Each check maps to a FIXED argv vector run with shell:false (no shell, no chaining). Replace the example checks below with your project's real commands. See harness/examples/checks.python-lmcache.json for a complete Python example.",
+  "$schema-note": "Per-repo config for the pi harness engine. The Verifier (run_check) and the inline /checks command may run ONLY the named checks defined here plus the always-available git checks (git-diff, git-diff-stat, git-status, git-log). Each check maps to a FIXED argv vector run with shell:false (no shell, no chaining). 'boundaries' is the machine form of AGENTS.md's 'Boundaries (do not touch without asking)' — JS regex strings matched REPO-ROOT-relative by the command-guard extension to block writes/edits into those paths (keep it in sync with the AGENTS.md prose). Secret redaction patterns live separately in harness/redaction.json (optional). Replace the example checks below with your project's real commands. See harness/examples/checks.python-lmcache.json for a complete Python example.",
   "diffBases": ["main", "HEAD~1"],
+  "boundaries": ["(^|/)migrations/", "(^|/)vendor/", "\\.generated\\.", "(^|/)dist/", "(^|/)node_modules/", "(^|/)\\.venv/"],
   "env": {
     "venvBinDir": ".venv/bin",
     "virtualEnvDir": ".venv"
