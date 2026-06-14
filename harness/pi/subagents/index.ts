@@ -267,7 +267,7 @@ async function runSubagent(opts: RunSubagentOptions): Promise<SubagentResult> {
 		"--no-extensions", // do not re-enter this extension or any ambient one
 	];
 	if (opts.runnerPath) args.push("-e", opts.runnerPath); // explicit -e still loads under --no-extensions
-	args.push("--append-system-prompt", promptFile);
+	args.push("--append-system-prompt", combined);
 	args.push("--tools", opts.tools);
 	args.push(opts.userTurn); // positional prompt = first (only) user turn
 

@@ -32,7 +32,34 @@ harness/
   ├── copilot-instructions.md, prompts/*.prompt.md, instructions/*.md  (Copilot wiring)
 ```
 
-## Quick start (3 steps)
+## Install pi (one-time, per machine)
+
+The `/plan` and `/verify` commands run on **pi** — a minimal, self-extensible
+coding-agent CLI ([`earendil-works/pi`](https://github.com/earendil-works/pi)).
+Skip this section if you only want the markdown harness (it works with any agent,
+no pi required); do it if you want the real sub-agent commands.
+
+1. **Prerequisite:** Node.js **≥ 22.19.0** (`node -v` to check).
+2. **Install the `pi` binary** (global) — either:
+   ```bash
+   npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+   # …or, on macOS / Linux:
+   curl -fsSL https://pi.dev/install.sh | sh
+   ```
+3. **Authenticate.** Launch `pi`, then provide a provider API key *or* use a
+   subscription login:
+   ```bash
+   export ANTHROPIC_API_KEY=sk-ant-...   # or OPENAI_API_KEY, GEMINI_API_KEY, …
+   pi
+   ```
+   …or run `/login` inside pi (Claude Pro/Max, ChatGPT Plus/Pro, or GitHub
+   Copilot). Credentials live in `~/.pi/agent/auth.json`; settings in
+   `~/.pi/agent/settings.json`.
+4. **Pick a model** inside pi with `/model` (or `Ctrl+L`).
+
+`pi` is now on your `PATH`. Full docs: <https://pi.dev/docs/latest>.
+
+## Install this harness into your repo (end-to-end)
 
 1. **Drop it in.** Copy `AGENTS.md`, `CLAUDE.md`, `memory/`, `harness/`, and (for
    Copilot) `.github/` into your repo root.
@@ -41,12 +68,14 @@ harness/
    `memory/MEMORY.md`, or let an agent do it: run `/bootstrap-fill` (Copilot/pi)
    or paste `harness/prompts/1-bootstrap-fill.md`, then `/bootstrap-verify`.
 
-3. **Configure & install the pi engine.**
-   - Edit `harness/checks.json` to list **your** project's checks (test, lint,
-     typecheck…). See `harness/examples/checks.python-lmcache.json` for a full
-     Python example. With no edits you still get the universal git checks.
-   - Run `harness/pi/install.sh` once per machine. Open pi in the repo, `/reload`,
-     then use `/plan <feature> <task>` and `/verify`.
+3. **Configure the checks.** Edit `harness/checks.json` to list **your** project's
+   checks (test, lint, typecheck…). See `harness/examples/checks.python-lmcache.json`
+   for a full Python example. With no edits you still get the universal git checks.
+
+4. **Install the pi engine.** Run `harness/pi/install.sh` once per machine — it
+   symlinks the engine into `~/.pi/agent/extensions/subagents/` (override with
+   `PI_EXTENSIONS_DIR`; `--copy` to copy instead of symlink). Open pi in the repo,
+   run `/reload`, then use `/plan <feature> <task>` and `/verify`.
 
 ## The workflow
 
