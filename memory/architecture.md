@@ -8,9 +8,13 @@
   both the Verifier's `run_check` and the main-session `/checks` so they never diverge.
 - `harness/pi/shared/redact.ts` — `loadRedactor(cwd)` → a configured `redact(text)` closure (secret-
   shaped patterns, capture-group-preserving). The ONE redactor, used by secret-redaction AND runFixedTee.
-- `harness/pi/subagents/index.ts` — the parent: registers all 6 commands, `runSubagent` (spawns an
-  isolated `pi` subprocess with `--model/--thinking` + a `--tools` allowlist), `computeDiff`/`computeGitLog`,
-  per-role `handoff*` blocks, SUMMARY extraction. Runs in the main session.
+- `harness/pi/subagents/index.ts` — the parent: registers all 6 role commands + `/enrich`, `runSubagent`
+  (spawns an isolated `pi` subprocess with `--model/--thinking` + a `--tools` allowlist),
+  `computeDiff`/`computeGitLog`, per-role `handoff*` blocks, SUMMARY extraction, and the per-role context
+  layer (`readContext`/`contextBody`/`appendWatchRule`, `CONTEXT_ROLES`). Runs in the main session.
+- `harness/prompts/<role>-context.md` — per-role repo-context layer (the 3rd prompt layer): `## Repo
+  context` (autofilled at bootstrap) + `## Watch for` (added via `/enrich`). Comment-only ⇒ not injected.
+  The generic `harness/prompts/<role>.md` files stay shared/unmodified.
 - `harness/pi/subagents/runner.ts` — loaded ONLY into a sub-agent via `-e`. ONE default export →
   `registerRunCheck` + `registerRunExperiment`.
 - `harness/pi/{command-guard,secret-redaction,checks,boundary-instructions}/index.ts` — main-session
@@ -20,10 +24,13 @@
 
 ## Data flow
 `/role <args>` → parent (index.ts) builds the first user turn (MEMORY.md index + role inputs +
-diff/log + a `handoff` block) → `runSubagent` spawns `pi --mode json -p --no-session --no-extensions
-[-e runner|web] --model X --thinking xhigh --tools <allowlist> <turn>` → the sub-agent reads on demand,
-runs only allowlisted tools, writes ONE `memory/*` file → parent extracts the `## SUMMARY` (only that
-crosses back) + posts it via `pi.sendMessage`.
+diff/log + a `handoff` block) → `runSubagent` composes the system prompt as 3 layers (AGENTS.md →
+generic `harness/prompts/<role>.md` → this repo's `harness/prompts/<role>-context.md` if non-empty) and
+spawns `pi --mode json -p --no-session --no-extensions [-e runner|web] --model X --thinking xhigh
+--tools <allowlist> --append-system-prompt <combined> <turn>` → the sub-agent reads on demand, runs only
+allowlisted tools, writes ONE `memory/*` file → parent extracts the `## SUMMARY` (only that crosses
+back) + posts it via `pi.sendMessage`. `/enrich <role> <rule>` appends to the role's context file (no
+sub-agent).
 
 ## Key abstractions / glossary
 - **Sub-agent** — a separate, torn-down `pi` subprocess with its own context; no general shell, only a

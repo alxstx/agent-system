@@ -3,5 +3,6 @@ description: Run an allowlisted experiment and watch its output for errors, writ
 mode: agent
 ---
 Follow the instructions in [harness/prompts/monitor.md](../../harness/prompts/monitor.md).
+Also read [harness/prompts/monitor-context.md](../../harness/prompts/monitor-context.md) if present — this repo's context + watch-for rules for the monitor; it takes precedence over the generic guidance where they conflict.
 
 Inputs: an experiment name from `harness/checks.json` (`experiments`) and an optional note. Run it via the allowlisted runner, watch the streamed log for error patterns, and end with a verdict: GREEN (clean) / RED (errors detected), each finding cited as `log:line`. Write the full report to `memory/monitor-<run>.md`.

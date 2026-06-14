@@ -57,3 +57,4 @@ Entry point(s): {{ENTRYPOINTS}}. Request / data flow: {{ONE_LINE_DATA_FLOW}}.
 - Glossary / domain terms: `memory/architecture.md`
 - Known issues / tech debt: `memory/MEMORY.md` (Open questions) and `memory/decisions.md`
 - External docs / dashboards / tickets: {{LINKS}}
+- Each sub-agent also loads its repo-context file `harness/prompts/<role>-context.md` (autofilled at bootstrap; refine with `/enrich <role>`) — project-specific context + watch-for rules, on top of the generic role prompt.

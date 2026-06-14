@@ -1,6 +1,26 @@
 # Decisions (why-log, ADR-lite)
 <!-- One short entry per non-obvious choice. Record the trade-off, not just the outcome. -->
 
+## 2026-06-14 — Per-role repo-context files (harness/prompts/<role>-context.md) as a third prompt layer
+- **Context:** sub-agents got two prompt layers (AGENTS.md + the generic `harness/prompts/<role>.md`).
+  Nothing made a generic agent good at THIS repo, and the generic prompts are shared (can't drift).
+- **Decision:** add a third layer — a per-role context file co-located with each generic prompt,
+  injected by `runSubagent` AFTER the methodology (`readContext`/`contextRole`). One file holds BOTH
+  `## Repo context` (autofilled by `1-bootstrap-fill.md`) and `## Watch for` rules (added via `/enrich
+  <role>` / by hand). AGENTS.md only *points* at the mechanism; detail lives in the files + memory.
+- **Why these shapes:**
+  - *Markdown co-located in `harness/prompts/`, not JSON / not in checks.json* — so the `.github`
+    Copilot wrappers read the same sibling file (no harness drift), and it's per-role targetable.
+  - *Named by role* (`verify-context.md`, even though the generic file is `verify-change.md`) — so
+    `/enrich verify` maps cleanly and the pair sorts together in a listing.
+  - *Comment-only skeletons ⇒ empty ⇒ nothing injected* (`stripComments`+trim) — backward-compatible:
+    a repo that hasn't filled them in gets the exact old two-layer prompt, byte-identical.
+  - *Read at run time from the repo, never installed into ~/.pi* — one installed engine, per-repo
+    content; `install.sh` unchanged (the files live under `harness/prompts/`, not `harness/pi/*`).
+- **Trade-off:** `harness/prompts/` now mixes shared generic prompts (never edit per-repo) with
+  per-repo `-context.md` files (meant to be edited). The `-context` suffix + README note carry the
+  distinction; `/enrich` and bootstrap touch ONLY the context files.
+
 ## 2026-06-14 — Shared core in harness/pi/shared/, imported by relative path
 - **Context:** `/checks` and `run_check` must run the SAME allowlist; secret-redaction and `/monitor`
   must redact with the SAME patterns — otherwise main session and sub-agents drift.

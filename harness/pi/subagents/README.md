@@ -9,8 +9,8 @@ the markdown harness uses for GitHub Copilot, reading the *same* markdown
   with the shared core in `harness/pi/shared/` (`checks-core.ts` + `redact.ts`)
 - **Install into pi:** `harness/pi/install.sh` → links/copies every `harness/pi/<ext>/` + `shared/`
   into `~/.pi/agent/extensions/`
-- **Commands:** `/plan`, `/verify`, `/triage`, `/monitor`, `/report`, `/research` (this engine);
-  plus `/checks` and `/guard` from the sibling extensions
+- **Commands:** `/plan`, `/verify`, `/triage`, `/monitor`, `/report`, `/research`, `/enrich` (this
+  engine); plus `/checks` and `/guard` from the sibling extensions
 
 ### Per-role model & effort (Phase 0.5)
 
@@ -40,6 +40,34 @@ Each reads its canonical `harness/prompts/<role>.md` + a `.github/prompts/<role>
   and `/plan` + `/verify` work there with no code change.
 - **Works in:** any repo with `harness/prompts/plan.md` + `memory/MEMORY.md` above the
   cwd (auto-detected — see *Repo detection*)
+
+### Per-role repository context (the third prompt layer + `/enrich`)
+
+Each sub-agent's system prompt has **three** layers, appended to Pi's default:
+
+```
+AGENTS.md (generic contract)  →  harness/prompts/<role>.md (generic methodology)  →  harness/prompts/<role>-context.md (THIS repo)
+```
+
+The third layer is a **per-role context file**, co-located with the generic prompt, that makes a
+generic agent good at *this* codebase. It carries two kinds of content in one file:
+
+- **`## Repo context`** — what that agent should know about this repo (risky areas for `/verify`,
+  where failures originate for `/triage`, trusted sources for `/research`, …). **Autofilled at
+  bootstrap** by `harness/prompts/1-bootstrap-fill.md` when the harness first reads the project.
+- **`## Watch for (maintainer rules)`** — specific things a maintainer wants that agent to always
+  check. Add them with **`/enrich <role> <rule>`** (or edit the file by hand).
+
+It is injected **after** the generic methodology and labeled as taking precedence where the two
+conflict. Files are read from the repo at run time (never installed into `~/.pi`), so the one
+installed engine serves every repo. **Empty / comment-only ⇒ nothing injected** — a repo that hasn't
+filled them in gets exactly the old two-layer prompt (the skeletons ship comment-only).
+
+`/enrich` (no args) lists each role's context file with a rule count + preview;
+`/enrich verify always check CUDA stream cleanup in kernels` appends a bullet under `## Watch for` in
+`harness/prompts/verify-context.md`, and every future `/verify` loads it. The generic
+`harness/prompts/<role>.md` files are **never** touched by `/enrich` or bootstrap — they stay shared
+so the pi and Copilot harnesses don't drift.
 
 > **Core rule honored:** *index in context, detail on disk.* Sub-agents run in their
 > own isolated context, **write their own full markdown file** to disk, and return
@@ -232,10 +260,13 @@ The methodology source files it reads:
 - `AGENTS.md` (the brief, prefixed onto each sub-agent's system prompt)
 - `harness/prompts/plan.md` (Planner methodology)
 - `harness/prompts/verify-change.md` (Verifier methodology)
+- `harness/prompts/<role>-context.md` (this repo's per-role context layer — see above)
 - `memory/MEMORY.md` (live index, into the first user turn)
 
-These are **never modified** by the extension — edit them to evolve the
-methodology, and both this harness and your Copilot agents stay in sync.
+The **generic** methodology files (`harness/prompts/<role>.md`) are **never modified** by the
+extension — edit them to evolve the methodology, and both this harness and your Copilot agents stay in
+sync. The **per-role `<role>-context.md`** files are the one exception: they are the project-specific
+layer, written by bootstrap and by `/enrich`, and are expected to differ per repo.
 
 ---
 
@@ -265,9 +296,11 @@ methodology, and both this harness and your Copilot agents stay in sync.
 harness/pi/
 ├── install.sh              # link/copy the engine into ~/.pi/agent/extensions/
 └── subagents/
-    ├── index.ts            # /plan + /verify commands; spawns sub-agents, writes files, posts summaries
+    ├── index.ts            # /plan /verify /triage /monitor /report /research /enrich; spawns sub-agents, injects per-role context, posts summaries
     ├── runner.ts           # run_check tool (reads harness/checks.json) — loaded only into the Verifier
     └── README.md           # this file
+
+harness/prompts/<role>-context.md   # per-role repo context layer (autofilled at bootstrap; refined by /enrich)
 
 harness/checks.json         # per-repo check definitions consumed by runner.ts
 ```

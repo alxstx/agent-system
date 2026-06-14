@@ -10,6 +10,7 @@ Go through `AGENTS.md`, `memory/MEMORY.md`, `memory/architecture.md`, and `memor
 - **`(?)` and (inferred) items** — resolve each to confirmed / corrected / removed. These are the highest-risk claims; check them first.
 - **Altitude & size** — flag anything vague-and-unverifiable, contradictory, duplicated, or that pushes `AGENTS.md` past ~200 lines (token bloat).
 - **Gaps** — a major module, command, or service that exists in the repo but is missing from the harness.
+- **Sub-agent context files** — for each non-empty `harness/prompts/<role>-context.md`, every bullet in its `## Repo context` area must be grounded in real paths/code, concise, and genuinely project-specific. Flag anything that merely restates the generic `harness/prompts/<role>.md`, is vague/unverifiable, or bloats the file (same altitude rule as AGENTS.md). A comment-only context file is fine — it means "nothing project-specific yet."
 
 ## Severity
 - **blocker** — wrong command/path, or a claim that would actively mislead an implementer. Must fix before use.

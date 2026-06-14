@@ -23,6 +23,7 @@ harness/
   ├── README.md            the full methodology + token-hygiene guide (read this)
   ├── prompts/*.md         canonical role prompts: bootstrap, plan, verify, implement,
   │                          triage, monitor, report, research
+  │                        + <role>-context.md: per-repo context layer (autofill + /enrich)
   ├── templates/           pristine AGENTS.template.md
   ├── checks.json          per-repo allowlist: checks (verify/checks), boundaries
   │                          (command-guard), experiments (/monitor)
@@ -32,7 +33,7 @@ harness/
   └── pi/
       ├── install.sh       installs EVERY harness/pi/<ext> + shared/ into pi
       ├── shared/          checks-core.ts + redact.ts (one allowlist, one redactor)
-      ├── subagents/       the engine: /plan /verify /triage /monitor /report /research
+      ├── subagents/       the engine: /plan /verify /triage /monitor /report /research /enrich
       ├── command-guard/   blocks destructive bash + boundary writes (+ /guard toggle)
       ├── secret-redaction/ scrubs secrets from main-session tool output
       ├── checks/          /checks — run the allowlist inline (no sub-agent, no tokens)
@@ -111,6 +112,12 @@ no pi required); do it if you want the real sub-agent commands.
 Reviewing agents (`/verify`) run on **GPT-5.5**; all others on **Opus 4.8**; both at `xhigh`
 thinking. GPT-5.5 needs the OpenAI provider authenticated in pi (else `/verify` errors).
 
+Each sub-agent also loads a per-role **repo-context file** `harness/prompts/<role>-context.md` on top
+of its generic prompt — project-specific context (autofilled at bootstrap) plus watch-for rules. Teach
+one a repo-specific rule with **`/enrich <role> <rule>`** (e.g. `/enrich verify always check CUDA
+stream cleanup in kernels`); `/enrich` alone lists them. Empty ⇒ nothing injected, so existing repos
+are unaffected until filled.
+
 **Main-session extensions** (govern the human-driven session; sub-agents are immune):
 
 - **command-guard** — blocks destructive bash + writes into `checks.json` `boundaries`; `/guard on|off` overrides.
@@ -164,6 +171,7 @@ Open `pi` in your harnessed repo. A normal feature loop:
 | Run + watch an experiment | `/monitor <experiment> [note]` | `memory/monitor-<run>.md` (+ log) |
 | Write it up for an audience | `/report <subject> [--for=…]` | `memory/reports/<subject>-<date>.md` |
 | Research a web question | `/research <topic> <question>` | `memory/research-<topic>.md` |
+| Teach an agent a repo-specific rule | `/enrich <role> <rule>` | `harness/prompts/<role>-context.md` |
 | Toggle the destructive-command guard | `/guard on\|off` | (session state) |
 
 ### Configure it (all per-repo, no code changes)

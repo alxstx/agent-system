@@ -4,9 +4,13 @@
 ## Current focus
 The harness is a pi extension suite: 6 sub-agent roles (/plan /verify /triage /monitor /report
 /research) + 4 main-session extensions (command-guard, secret-redaction, /checks, boundary-instructions),
-sharing one allowlist + one redactor via `harness/pi/shared/`.
+sharing one allowlist + one redactor via `harness/pi/shared/`. Each role also loads a per-repo
+`harness/prompts/<role>-context.md` overlay (3rd prompt layer; autofill + `/enrich <role>`).
 
 ## Recent changes (newest first — keep ~7 max)
+- 2026-06-14 — Added a 3rd sub-agent prompt layer: per-role `harness/prompts/<role>-context.md`
+  (autofilled at bootstrap; refined via new `/enrich <role>` command). `runSubagent` injects it after
+  the generic methodology (`readContext`); comment-only ⇒ nothing injected. AGENTS.md just points at it.
 - 2026-06-14 — Built /triage /monitor /report /research roles + command-guard / secret-redaction /
   /checks / boundary-instructions extensions; extracted `harness/pi/shared/{checks-core,redact}.ts`;
   generalized `install.sh` (loops all `harness/pi/<ext>/` + installs `shared/`). See `BUILD-REPORT.md`.
@@ -38,3 +42,5 @@ sharing one allowlist + one redactor via `harness/pi/shared/`.
 - /triage → `memory/triage-<id>.md`; /monitor → `memory/monitor-<run>.md` (+ `memory/runs/<run>.log`,
   gitignored); /report → `memory/reports/<subject>-<date>.md`; /research → `memory/research-<topic>.md`
 - Engine internals + per-role model policy → `harness/pi/subagents/README.md`
+- Per-role repo context (3rd prompt layer) + `/enrich` → `harness/prompts/<role>-context.md`;
+  engine in `harness/pi/subagents/index.ts`; why → `memory/decisions.md`

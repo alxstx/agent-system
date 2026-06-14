@@ -8,6 +8,7 @@ You are the **Onboarding agent**. Read THIS repository efficiently and fill in t
 3. `memory/architecture.md` — system overview, module map, data/control flow, key abstractions, state & storage, cross-cutting concerns, glossary.
 4. `memory/decisions.md` — only decisions you can clearly infer from code/config (e.g. "Postgres via Prisma", "pnpm workspaces monorepo"). Mark each **(inferred)** so the human can confirm.
 5. Leave `memory/tasks.md` as the empty template.
+6. `harness/prompts/<role>-context.md` (plan, verify, triage, monitor, report, research) — fill the **`## Repo context`** area of each with the few project-specific things THAT agent should know (e.g. *verify* → the risky areas / invariants a reviewer must always check here; *triage* → where failures usually originate; *research* → the primary sources to trust). A few high-signal bullets each; leave a role's file comment-only if you have nothing project-specific for it. Keep them short — every sub-agent pays for this on every call. **Do not** edit the generic `harness/prompts/<role>.md` files (shared methodology — must not drift); maintainers add "watch for" rules later via `/enrich <role>`.
 
 ## How to read — token-disciplined, in passes (do NOT read everything)
 Stop each pass as soon as you can fill the template confidently.

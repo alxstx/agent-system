@@ -68,6 +68,16 @@ let monitorSeq = 0;
 // under the full subagent flag set; only an actual web_search call needs live auth/network.
 const WEB_TOOLS_SOURCE = "npm:pi-web-access";
 
+// Per-role repository-context files: harness/prompts/<role>-context.md, co-located with the generic
+// methodology prompt (harness/prompts/<role>.md) and injected into that role's sub-agent AFTER it.
+// Each file carries TWO kinds of content in one place: repo context (autofilled at bootstrap) and
+// "watch for" rules a maintainer adds via /enrich. It is read at run time from the repo (never
+// installed into ~/.pi), so a single installed engine serves every harnessed repo. A comment-only /
+// empty file injects NOTHING — the composed prompt is byte-identical to a repo that never filled it in.
+const CONTEXT_ROLES = ["plan", "verify", "triage", "monitor", "report", "research"] as const;
+// The markdown heading under which /enrich appends maintainer rules (bootstrap fills "## Repo context").
+const WATCH_HEADING = "## Watch for (maintainer rules)";
+
 // Build the human-readable list of checks a runner-backed sub-agent is allowed to run, derived
 // from <repoRoot>/harness/checks.json (project-specific checks + test-file) plus the universal git
 // checks and the read-only /triage probes. GIT_CHECKS/READONLY_PROBES are imported from the shared
@@ -257,6 +267,75 @@ function readIfExists(p: string): string | undefined {
 }
 
 // ---------------------------------------------------------------------------
+// Per-role repository-context files (harness/prompts/<role>-context.md)
+// ---------------------------------------------------------------------------
+
+// Strip HTML comments so a comment-only skeleton file reads as empty (=> nothing injected).
+function stripComments(s: string): string {
+	return s.replace(/<!--[\s\S]*?-->/g, "");
+}
+
+function contextPath(repoRoot: string, role: string): string {
+	return path.join(repoRoot, "harness", "prompts", `${role}-context.md`);
+}
+
+// The real (non-comment) body of a role's context file, or "" if empty/missing/comment-only.
+function contextBody(repoRoot: string, role: string): string {
+	const raw = readIfExists(contextPath(repoRoot, role));
+	return raw ? stripComments(raw).trim() : "";
+}
+
+// Build the system-prompt section appended to a sub-agent for its repo context, or "" when empty.
+// Injected AFTER the generic methodology and labeled as project-specific + higher-priority.
+function readContext(repoRoot: string, role: string): string {
+	const body = contextBody(repoRoot, role);
+	if (!body) return "";
+	return [
+		"## Repository context & rules — THIS repo (project-specific overlay)",
+		"Specific to this repository; takes precedence over the generic guidance above where they",
+		"conflict. Treat these as additional must-checks for this codebase.",
+		"",
+		body,
+	].join("\n");
+}
+
+// Append a maintainer rule as a bullet under the "## Watch for" area of a role's context file,
+// creating the file (and/or that area) if needed. Used by /enrich.
+function appendWatchRule(file: string, role: string, text: string): void {
+	let content = readIfExists(file);
+	if (content === undefined) {
+		content = [
+			`<!-- Repo context for the ${role} sub-agent (harness/prompts/${role}-context.md). Loaded into`,
+			`     the ${role} sub-agent after its generic harness/prompts prompt. Keep it short — the agent`,
+			`     pays for it on every call. Comment-only = nothing injected. -->`,
+			"",
+		].join("\n");
+	}
+	const bullet = `- ${text}`;
+	const lines = content.split("\n");
+	const headIdx = lines.findIndex((l) => /^##\s+Watch for\b/i.test(l));
+	if (headIdx === -1) {
+		// No Watch-for area yet: append the heading + bullet at EOF.
+		const sep = content.length && !content.endsWith("\n") ? "\n" : "";
+		content = `${content}${sep}\n${WATCH_HEADING}\n\n${bullet}\n`;
+	} else {
+		// Insert at the end of the Watch-for section (before the next "## " heading or EOF).
+		let insertAt = lines.length;
+		for (let i = headIdx + 1; i < lines.length; i++) {
+			if (/^##\s+/.test(lines[i])) {
+				insertAt = i;
+				break;
+			}
+		}
+		while (insertAt > headIdx + 1 && lines[insertAt - 1].trim() === "") insertAt--;
+		lines.splice(insertAt, 0, bullet);
+		content = lines.join("\n");
+		if (!content.endsWith("\n")) content += "\n";
+	}
+	fs.writeFileSync(file, content, "utf-8");
+}
+
+// ---------------------------------------------------------------------------
 // Feature-scoped overall plan files: memory/plan-<feature>.md
 // ---------------------------------------------------------------------------
 
@@ -335,16 +414,21 @@ interface RunSubagentOptions {
 	model?: string;
 	/** Phase 0.5: thinking level; defaults to EFFORT ("xhigh"). */
 	thinking?: string;
+	/** Role key for the per-repo context file harness/prompts/<role>-context.md (injected if non-empty). */
+	contextRole?: string;
 	userTurn: string;
 	onProgress?: (turns: number, lastTool: string | undefined) => void;
 }
 
 async function runSubagent(opts: RunSubagentOptions): Promise<SubagentResult> {
-	// Build the stable system-prompt addition: AGENTS.md brief + methodology body.
-	// Appended to Pi's default prompt (per the chosen "append to default" mode).
+	// Build the stable system-prompt addition: AGENTS.md brief + generic methodology body + (optional)
+	// this repo's per-role context file. Appended to Pi's default prompt ("append to default" mode).
 	const brief = readIfExists(opts.agentsPath) ?? "";
 	const body = readIfExists(opts.promptBodyPath) ?? "";
-	const combined = `${brief.trim()}\n\n---\n\n${body.trim()}\n`;
+	const context = opts.contextRole ? readContext(opts.repoRoot, opts.contextRole) : "";
+	const combined = context
+		? `${brief.trim()}\n\n---\n\n${body.trim()}\n\n---\n\n${context}\n`
+		: `${brief.trim()}\n\n---\n\n${body.trim()}\n`;
 
 	const args: string[] = [
 		"--mode",
@@ -611,6 +695,7 @@ export default function subagents(pi: ExtensionAPI) {
 					promptBodyPath: repo.planPrompt,
 					tools: "read,grep,find,ls,write",
 					model: MODEL_DEFAULT, // Phase 0.5: Planner runs on Opus 4.8 (xhigh)
+					contextRole: "plan",
 					userTurn,
 					onProgress: (turns, lastTool) =>
 						ctx.ui.setStatus("subagents", `planner: turn ${turns}${lastTool ? ` (${lastTool})` : ""}…`),
@@ -736,6 +821,7 @@ export default function subagents(pi: ExtensionAPI) {
 					tools: "read,grep,find,ls,run_check,write",
 					runnerPath: RUNNER_PATH,
 					model: MODEL_REVIEW, // Phase 0.5: Verifier (reviewer class) runs on GPT-5.5 (xhigh)
+					contextRole: "verify",
 					userTurn,
 					onProgress: (turns, lastTool) =>
 						ctx.ui.setStatus("subagents", `verifier: turn ${turns}${lastTool ? ` (${lastTool})` : ""}…`),
@@ -839,6 +925,7 @@ export default function subagents(pi: ExtensionAPI) {
 					tools: "read,grep,find,ls,run_check,write",
 					runnerPath: RUNNER_PATH,
 					model: MODEL_DEFAULT, // Phase 0.5: diagnostic/observer class -> Opus 4.8 (xhigh)
+					contextRole: "triage",
 					userTurn,
 					onProgress: (turns, lastTool) =>
 						ctx.ui.setStatus("subagents", `triage: turn ${turns}${lastTool ? ` (${lastTool})` : ""}…`),
@@ -945,6 +1032,7 @@ export default function subagents(pi: ExtensionAPI) {
 					tools: "read,grep,find,ls,run_experiment,write",
 					runnerPath: RUNNER_PATH,
 					model: MODEL_DEFAULT, // Phase 0.5: observer class -> Opus 4.8 (xhigh)
+					contextRole: "monitor",
 					userTurn,
 					onProgress: (turns, lastTool) =>
 						ctx.ui.setStatus("subagents", `monitor: turn ${turns}${lastTool ? ` (${lastTool})` : ""}…`),
@@ -1077,6 +1165,7 @@ export default function subagents(pi: ExtensionAPI) {
 					promptBodyPath: path.join(repo.root, "harness", "prompts", "report.md"),
 					tools: "read,grep,find,ls,write", // writer composes; no execution surface
 					model: MODEL_DEFAULT, // Phase 0.5: author class -> Opus 4.8 (xhigh)
+					contextRole: "report",
 					userTurn,
 					onProgress: (turns, lastTool) =>
 						ctx.ui.setStatus("subagents", `report: turn ${turns}${lastTool ? ` (${lastTool})` : ""}…`),
@@ -1166,6 +1255,7 @@ export default function subagents(pi: ExtensionAPI) {
 					tools: "read,grep,find,ls,write,web_search,fetch_content",
 					runnerPath: WEB_TOOLS_SOURCE, // -e npm:pi-web-access — web tools load only via explicit -e
 					model: MODEL_DEFAULT, // Phase 0.5: research class -> Opus 4.8 (xhigh)
+					contextRole: "research",
 					userTurn,
 					onProgress: (turns, lastTool) =>
 						ctx.ui.setStatus("subagents", `research: turn ${turns}${lastTool ? ` (${lastTool})` : ""}…`),
@@ -1209,6 +1299,64 @@ export default function subagents(pi: ExtensionAPI) {
 				{ deliverAs: "nextTurn" },
 			);
 			ctx.ui.notify(`Research: ${verdictWord} — written to memory/research-${slug}.md`, "info");
+		},
+	});
+
+	pi.registerCommand("enrich", {
+		description:
+			"Add a repo-specific rule to a sub-agent's context file (harness/prompts/<role>-context.md). Usage: /enrich <role> <rule>; /enrich alone lists them.",
+		handler: async (args: string, ctx: ExtensionCommandContext) => {
+			const repo = findRepoRoot(ctx.cwd);
+			if (!repo) {
+				ctx.ui.notify(
+					"Not inside the harness repo (need harness/prompts/plan.md + memory/MEMORY.md above cwd).",
+					"error",
+				);
+				return;
+			}
+			const raw = args.trim();
+
+			// No args (or --list): show each role's context file (rule count + a short preview).
+			if (!raw || raw === "--list") {
+				const lines = CONTEXT_ROLES.map((role) => {
+					const body = contextBody(repo.root, role);
+					if (!body) return `- ${role}: (empty)`;
+					const rules = body.split("\n").filter((l) => /^\s*[-*]\s+/.test(l)).length;
+					const first = body.split("\n").find((l) => l.trim() && !/^#/.test(l) && !/^\s*[-*]\s+/.test(l));
+					const firstRule = body.split("\n").find((l) => /^\s*[-*]\s+/.test(l))?.replace(/^\s*[-*]\s+/, "");
+					const preview = (first?.trim() || firstRule || "").slice(0, 60);
+					return `- ${role}: ${rules} rule(s)${preview ? ` — ${preview}${preview.length >= 60 ? "…" : ""}` : ""}`;
+				});
+				pi.sendMessage(
+					{
+						customType: "enrich",
+						content: `Per-role repo context (harness/prompts/<role>-context.md):\n${lines.join("\n")}\n\nAdd one: /enrich <role> <rule>`,
+						display: true,
+					},
+					{ deliverAs: "nextTurn" },
+				);
+				return;
+			}
+
+			// /enrich <role> <rule text...>
+			const firstSpace = raw.search(/\s/);
+			const role = (firstSpace === -1 ? raw : raw.slice(0, firstSpace)).toLowerCase();
+			const text = firstSpace === -1 ? "" : raw.slice(firstSpace + 1).trim();
+			if (!(CONTEXT_ROLES as readonly string[]).includes(role) || !text) {
+				ctx.ui.notify(`Usage: /enrich <role> <rule>  (role one of: ${CONTEXT_ROLES.join(", ")})`, "warning");
+				return;
+			}
+
+			appendWatchRule(contextPath(repo.root, role), role, text);
+			ctx.ui.notify(`Enriched ${role}: added to harness/prompts/${role}-context.md`, "info");
+			pi.sendMessage(
+				{
+					customType: "enrich",
+					content: `Enriched **${role}** context (harness/prompts/${role}-context.md, ## Watch for):\n- ${text}\n\nIt loads into every future /${role} sub-agent.`,
+					display: true,
+				},
+				{ deliverAs: "nextTurn" },
+			);
 		},
 	});
 }
