@@ -21,13 +21,22 @@ memory/                    externalized memory (templates — fill MEMORY.md fir
   └── tasks.md             active task slice (the pi /plan agent overwrites this)
 harness/
   ├── README.md            the full methodology + token-hygiene guide (read this)
-  ├── prompts/*.md         canonical role prompts: bootstrap, plan, verify, implement
+  ├── prompts/*.md         canonical role prompts: bootstrap, plan, verify, implement,
+  │                          triage, monitor, report, research
   ├── templates/           pristine AGENTS.template.md
-  ├── checks.json          per-repo allowlist of commands the /verify agent may run
+  ├── checks.json          per-repo allowlist: checks (verify/checks), boundaries
+  │                          (command-guard), experiments (/monitor)
+  ├── redaction.json       (optional) secret-redaction pattern overrides
+  ├── mcp.example.json     MCP template (arXiv via pi-mcp-adapter) — copy to .pi/mcp.json
   ├── examples/            checks.python-lmcache.json — a complete worked example
   └── pi/
-      ├── install.sh       install the /plan + /verify engine into pi
-      └── subagents/       the generic engine (index.ts + runner.ts + README.md)
+      ├── install.sh       installs EVERY harness/pi/<ext> + shared/ into pi
+      ├── shared/          checks-core.ts + redact.ts (one allowlist, one redactor)
+      ├── subagents/       the engine: /plan /verify /triage /monitor /report /research
+      ├── command-guard/   blocks destructive bash + boundary writes (+ /guard toggle)
+      ├── secret-redaction/ scrubs secrets from main-session tool output
+      ├── checks/          /checks — run the allowlist inline (no sub-agent, no tokens)
+      └── boundary-instructions/  steers .github/instructions/ rules on matching edits
 .github/
   ├── copilot-instructions.md, prompts/*.prompt.md, instructions/*.md  (Copilot wiring)
 ```
@@ -72,21 +81,42 @@ no pi required); do it if you want the real sub-agent commands.
    checks (test, lint, typecheck…). See `harness/examples/checks.python-lmcache.json`
    for a full Python example. With no edits you still get the universal git checks.
 
-4. **Install the pi engine.** Run `harness/pi/install.sh` once per machine — it
-   symlinks the engine into `~/.pi/agent/extensions/subagents/` (override with
-   `PI_EXTENSIONS_DIR`; `--copy` to copy instead of symlink). Open pi in the repo,
-   run `/reload`, then use `/plan <feature> <task>` and `/verify`.
+4. **Install the pi extensions.** Run `harness/pi/install.sh` once per machine — it
+   symlinks **every** `harness/pi/<ext>/` (subagents, command-guard, secret-redaction,
+   checks, boundary-instructions) plus `shared/` into `~/.pi/agent/extensions/`
+   (override with `PI_EXTENSIONS_DIR`; `--copy` to copy instead of symlink, which also
+   copies `shared/`). Open pi in the repo, run `/reload`.
 
-## The workflow
+5. **(Optional) extra capabilities.** `/research` needs web tools and the arXiv MCP needs
+   the adapter:
+   ```bash
+   pi install npm:pi-web-access          # web_search + fetch_content for /research
+   pi install npm:pi-mcp-adapter         # MCP support
+   uv tool install 'arxiv-mcp-server[pdf]'   # the one in-scope MCP (arXiv)
+   cp harness/mcp.example.json .pi/mcp.json  # enable it (project-local)
+   ```
 
-- **`/plan <feature> <task>`** — Planner sub-agent (isolated `pi` process, no
-  shell, no `edit`) explores the repo and writes the durable roadmap
-  `memory/plan-<feature>.md` + the next slice `memory/tasks.md`; returns a
-  ≤10-line summary.
-- **Implement** — ordinary work in your main session, following `memory/tasks.md`.
-- **`/verify`** — Verifier sub-agent judges the diff against the plan + slice,
-  runs only the allowlisted checks from `harness/checks.json`, writes
-  `memory/verdict.md`, returns PASS/FAIL + a ≤10-line summary.
+## Commands & extensions
+
+**Sub-agent roles** (each = an isolated `pi` subprocess, no general shell, writes ONE
+`memory/` file, returns only a ≤10-line SUMMARY):
+
+- **`/plan <feature> <task>`** — durable roadmap `memory/plan-<feature>.md` + next slice `memory/tasks.md`.
+- **`/verify [feature] [note]`** — judges the diff vs plan+slice, runs only allowlisted checks, writes `memory/verdict.md` → PASS/FAIL.
+- **`/triage [<log>] [note]`** — ranks root-cause hypotheses + one next probe → `memory/triage-<id>.md`.
+- **`/monitor <experiment> [note]`** — runs an allowlisted experiment, watches for errors, tees a redacted per-run log → `memory/monitor-<run>.md` (OK/ERROR).
+- **`/report <subject> [--for=team|paper|self]`** — composes an audience-facing document from artifacts → `memory/reports/<subject>-<date>.md`.
+- **`/research <topic> <question>`** — web-researches a cited, claim-checked note → `memory/research-<topic>.md` (needs `pi install npm:pi-web-access`).
+
+Reviewing agents (`/verify`) run on **GPT-5.5**; all others on **Opus 4.8**; both at `xhigh`
+thinking. GPT-5.5 needs the OpenAI provider authenticated in pi (else `/verify` errors).
+
+**Main-session extensions** (govern the human-driven session; sub-agents are immune):
+
+- **command-guard** — blocks destructive bash + writes into `checks.json` `boundaries`; `/guard on|off` overrides.
+- **secret-redaction** — scrubs secret-shaped strings from tool output before the model sees them.
+- **`/checks [name]`** — runs the `checks.json` allowlist inline (no sub-agent, no tokens) → green/red widget.
+- **boundary-instructions** — surfaces `.github/instructions/*.instructions.md` rules when a matching file is edited.
 
 Only the short summaries cross back into your main session — the expensive
 repo-reading stays inside the sub-agents and on disk.

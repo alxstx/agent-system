@@ -5,9 +5,35 @@ workflow as real `/plan` and `/verify` commands. It mirrors the same methodology
 the markdown harness uses for GitHub Copilot, reading the *same* markdown
 (`AGENTS.md`, `harness/prompts/*.md`, `memory/`) so the two harnesses never drift.
 
-- **Canonical source (version-controlled):** `harness/pi/subagents/` (`index.ts` + `runner.ts`)
-- **Install into pi:** `harness/pi/install.sh` → links/copies it to `~/.pi/agent/extensions/subagents/`
-- **Commands:** `/plan`, `/verify`
+- **Canonical source (version-controlled):** `harness/pi/subagents/` (`index.ts` + `runner.ts`),
+  with the shared core in `harness/pi/shared/` (`checks-core.ts` + `redact.ts`)
+- **Install into pi:** `harness/pi/install.sh` → links/copies every `harness/pi/<ext>/` + `shared/`
+  into `~/.pi/agent/extensions/`
+- **Commands:** `/plan`, `/verify`, `/triage`, `/monitor`, `/report`, `/research` (this engine);
+  plus `/checks` and `/guard` from the sibling extensions
+
+### Per-role model & effort (Phase 0.5)
+
+Every sub-agent is spawned with an explicit `--model` and `--thinking xhigh`:
+
+| Role | Class | Model |
+|---|---|---|
+| `/verify` | reviewer / adversarial judge | **GPT-5.5** (`MODEL_REVIEW`) |
+| `/plan`, `/triage`, `/monitor`, `/report`, `/research` | default | **Opus 4.8** (`MODEL_DEFAULT`) |
+
+The ids live in two constants at the top of `index.ts` — change them in ONE place if `pi --list-models`
+shows different canonical strings. **Provider auth:** GPT-5.5 means the **OpenAI provider must be
+authenticated in pi** (`OPENAI_API_KEY` or `/login`) or the Verifier subprocess errors out; the
+default (Opus) needs Anthropic auth. If a model can't load, the handler surfaces the subprocess error
+via `ctx.ui.notify`.
+
+### The other roles (same 3-part wiring)
+
+`/triage` (failing-run → ranked hypotheses + one probe; read-only `run_check` probes git-blame /
+git-log-file / env-dump), `/monitor` (runs an allowlisted **experiment** via `run_experiment`,
+redacted per-run log at `memory/runs/<runId>.log`), `/report` (composes an audience-facing document
+into `memory/reports/`), `/research` (web search via `-e npm:pi-web-access` → `memory/research-<topic>.md`).
+Each reads its canonical `harness/prompts/<role>.md` + a `.github/prompts/<role>.prompt.md` wrapper.
 - **Generic:** the project-specific verifier checks live in **`harness/checks.json`**, not in
   the code. One installed engine serves every repo that ships a `harness/` skeleton +
   `harness/checks.json`. Drop the harness into a new project, edit `harness/checks.json`,
