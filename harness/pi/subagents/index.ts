@@ -62,6 +62,12 @@ const MODEL_REVIEW = "openai/gpt-5.5"; // the reviewing/adversarial-judge agents
 // still collide within the same millisecond; the counter disambiguates).
 let monitorSeq = 0;
 
+// /research web tools: pi-web-access, loaded into the sub-agent via -e (explicit -e still loads
+// under --no-extensions). It exposes web_search + fetch_content. Operator prerequisite:
+// `pi install npm:pi-web-access`. Verified: `-e npm:pi-web-access` resolves + registers the tools
+// under the full subagent flag set; only an actual web_search call needs live auth/network.
+const WEB_TOOLS_SOURCE = "npm:pi-web-access";
+
 // Build the human-readable list of checks a runner-backed sub-agent is allowed to run, derived
 // from <repoRoot>/harness/checks.json (project-specific checks + test-file) plus the universal git
 // checks and the read-only /triage probes. GIT_CHECKS/READONLY_PROBES are imported from the shared
@@ -163,6 +169,21 @@ function handoffMonitor(reportPath: string, expName: string, runId: string, logR
 		"- Report sections: Command (exact argv) · Duration (and whether it hit the cap) · Exit status · Detected errors (each with a log:line citation + excerpt + classification) · Verdict GREEN or RED. Make it standalone.",
 		"- The ONLY file you may write is the report file above. Do NOT write or edit anything else (NOT memory/MEMORY.md). If you found a durable lesson (a real flaky signature), name it in your SUMMARY.",
 		"- AFTER the file is written, your final message must be a line exactly `## SUMMARY` whose FIRST token is OK or ERROR, followed by AT MOST 10 lines. Nothing else after it.",
+		"- The harness reads the file you wrote and surfaces only the SUMMARY to the main session.",
+	].join("\n");
+}
+
+function handoffResearch(researchPath: string): string {
+	return [
+		"---",
+		"HARNESS HANDOFF (read this):",
+		"- You have read AND write tools + web_search + fetch_content. You touch the WEB, never the repo's code or executables.",
+		`- Write your COMPLETE note as a markdown document to this exact file with the write tool: ${researchPath}`,
+		"- Corroborate: a claim is VERIFIED only with >=2 independent, primary-leaning sources; one source = UNCERTAIN; conflicting = DISPUTED. Fetch a page before citing it; never cite a search snippet.",
+		"- Output per your contract: a Verdict line, then `## Findings` (each claim tagged [VERIFIED|UNCERTAIN|DISPUTED — ref]), `## Open questions`, and a numbered `## Sources` (title — url — accessed date). Every inline ref must resolve in Sources.",
+		"- The ONLY file you may write is the note above. Do NOT write or edit anything else (NOT memory/MEMORY.md).",
+		"- If web_search is unavailable (pi-web-access not installed), say so and return INCONCLUSIVE — do not invent sources.",
+		"- AFTER the file is written, your final message must be a line exactly `## SUMMARY` whose FIRST token is CONFIDENT, MIXED, or INCONCLUSIVE, followed by AT MOST 10 lines. Nothing else after it.",
 		"- The harness reads the file you wrote and surfaces only the SUMMARY to the main session.",
 	].join("\n");
 }
@@ -1095,6 +1116,101 @@ export default function subagents(pi: ExtensionAPI) {
 				{ deliverAs: "nextTurn" },
 			);
 			ctx.ui.notify(`Report written: ${reportRel}`, "info");
+		},
+	});
+
+	pi.registerCommand("research", {
+		description:
+			"Research subagent (web search, isolated) -> a cited, claim-checked note in memory/research-<topic>.md. Needs: pi install npm:pi-web-access",
+		handler: async (args: string, ctx: ExtensionCommandContext) => {
+			const raw = args.trim();
+			const firstSpace = raw.search(/\s/);
+			const topicRaw = firstSpace === -1 ? raw : raw.slice(0, firstSpace);
+			const question = firstSpace === -1 ? "" : raw.slice(firstSpace + 1).trim();
+			const slug = slugify(topicRaw);
+			if (!slug || !question) {
+				ctx.ui.notify("Usage: /research <topic> <question>  (e.g. /research zod is zod or valibot smaller?)", "warning");
+				return;
+			}
+			const repo = findRepoRoot(ctx.cwd);
+			if (!repo) {
+				ctx.ui.notify(
+					"Not inside the harness repo (need harness/prompts/research.md + memory/MEMORY.md above cwd).",
+					"error",
+				);
+				return;
+			}
+
+			const researchPath = path.join(repo.memoryDir, `research-${slug}.md`);
+			const memory = readIfExists(repo.memory) ?? "(memory/MEMORY.md missing)";
+			const userTurn = [
+				"# Current memory index (memory/MEMORY.md)",
+				memory,
+				"---",
+				`# Research topic: ${slug}`,
+				"---",
+				"# QUESTION TO RESEARCH",
+				question,
+				"",
+				handoffResearch(researchPath),
+			].join("\n\n");
+
+			ctx.ui.setStatus("subagents", "research: starting…");
+			const sigBefore = fileSig(researchPath);
+			let res: SubagentResult;
+			try {
+				res = await runSubagent({
+					repoRoot: repo.root,
+					agentsPath: repo.agents,
+					promptBodyPath: path.join(repo.root, "harness", "prompts", "research.md"),
+					tools: "read,grep,find,ls,write,web_search,fetch_content",
+					runnerPath: WEB_TOOLS_SOURCE, // -e npm:pi-web-access — web tools load only via explicit -e
+					model: MODEL_DEFAULT, // Phase 0.5: research class -> Opus 4.8 (xhigh)
+					userTurn,
+					onProgress: (turns, lastTool) =>
+						ctx.ui.setStatus("subagents", `research: turn ${turns}${lastTool ? ` (${lastTool})` : ""}…`),
+				});
+			} finally {
+				ctx.ui.setStatus("subagents", "");
+			}
+
+			if (subagentFailed(res)) {
+				const why = res.errorMessage || res.stopReason || res.stderr.trim() || "no output";
+				ctx.ui.notify(`Research failed: ${why}. (Web tools require: pi install npm:pi-web-access)`, "error");
+				pi.sendMessage(
+					{
+						customType: "subagent-research",
+						content: `Research FAILED (${res.stopReason ?? `exit ${res.exitCode}`}): ${why}`,
+						display: true,
+					},
+					{ deliverAs: "nextTurn" },
+				);
+				return;
+			}
+
+			const wroteItself = fileSig(researchPath) !== sigBefore && (readIfExists(researchPath)?.trim()?.length ?? 0) > 0;
+			if (!wroteItself) {
+				fs.writeFileSync(researchPath, res.finalText.endsWith("\n") ? res.finalText : `${res.finalText}\n`, "utf-8");
+			}
+			const summary = extractSummary(res.finalText, 10);
+			const first = summary.split("\n")[0]?.trim().toUpperCase() ?? "";
+			const verdictWord = first.startsWith("CONFIDENT")
+				? "CONFIDENT"
+				: first.startsWith("INCONCLUSIVE")
+					? "INCONCLUSIVE"
+					: first.startsWith("MIXED")
+						? "MIXED"
+						: "MIXED";
+			pi.sendMessage(
+				{
+					customType: "subagent-research",
+					content: `Research summary (topic: ${slug}, ${res.turns} turns):\n\n${summary}\n\nFull note + citations -> memory/research-${slug}.md`,
+					display: true,
+					details: { verdict: verdictWord },
+				},
+				{ deliverAs: "nextTurn" },
+			);
+			ctx.ui.notify(`Research: ${verdictWord} — written to memory/research-${slug}.md`, "info");
 		},
 	});
 }
