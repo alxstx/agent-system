@@ -384,7 +384,10 @@ export async function runFixedTee(
 	signal: AbortSignal | undefined,
 	onUpdate: AgentToolUpdateCallback<unknown> | undefined,
 ): Promise<RunOutcome> {
-	const cmdline = `${cmd} ${args.join(" ")}`;
+	// Redact the cmdline ONCE up front so the live onUpdate preview, the returned outcome.cmdline,
+	// and anything the caller derives from it are all scrubbed (experiment argv is operator config and
+	// should not hold secrets, but redact defensively — consistent with the disk/stream redaction).
+	const cmdline = redact(`${cmd} ${args.join(" ")}`);
 	const logStream = fs.createWriteStream(absLogPath, { flags: "w" });
 	let output = "";
 	let pending = "";

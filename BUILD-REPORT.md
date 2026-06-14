@@ -92,7 +92,16 @@ is claimed "verified" that was only assumed.
 - `write`/`edit` field is `input.path` (not `file_path`) — code leads with `path`.
 - command-guard `rm` regex required a leading dash (skeleton matched `rm file.txt`); added `git push -f`;
   redirect rule excludes `>&`/`2>&1`.
-- `run_experiment` redacts the echoed cmdline too (defense-in-depth; the disk log already excludes it).
+- `runFixedTee` redacts the cmdline ONCE up front, so the live stream preview, the returned
+  `outcome.cmdline`, the `run_experiment` text echo AND `details.cmdline` are all scrubbed (a secret in
+  experiment argv → `echo [REDACTED]`). Defense-in-depth; argv is operator config (the disk log never
+  contained the cmdline). (Closed an independent-review nit.)
+
+## Independent review
+A fresh reviewer (no shared context) re-ran all six high-risk FLAG checks (a–f) against pi's real
+loader — all PASS — and confirmed the phases, security invariants, honest BLOCKED markings, clean
+commits, and no real secrets. Verdict: **APPROVE WITH NITS**; the 3 nits (cmdline redaction in the live
+stream + `details`, and a redundant `/research` ternary) were addressed in the final commit.
 
 ## Left for the human (live-pi, need Node ≥22.19 + provider auth)
 1. `pi --list-models` → confirm `openai/gpt-5.5` + `anthropic/opus-4.8` (FLAG #2); else edit the two

@@ -1198,9 +1198,7 @@ export default function subagents(pi: ExtensionAPI) {
 				? "CONFIDENT"
 				: first.startsWith("INCONCLUSIVE")
 					? "INCONCLUSIVE"
-					: first.startsWith("MIXED")
-						? "MIXED"
-						: "MIXED";
+					: "MIXED"; // default when the first token is MIXED or unrecognized
 			pi.sendMessage(
 				{
 					customType: "subagent-research",

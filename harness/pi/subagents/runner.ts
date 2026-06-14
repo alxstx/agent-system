@@ -195,9 +195,8 @@ function registerRunExperiment(pi: ExtensionAPI) {
 					? "exit 0 (clean)"
 					: `exit ${outcome.exitCode ?? "?"}${outcome.signal ? ` (signal ${outcome.signal})` : ""}`;
 
-			// Redact the echoed cmdline too (defense-in-depth: experiment argv is operator config and
-			// should not hold secrets, but if it did, scrub it from the agent-visible output).
-			const text = `$ ${redact(outcome.cmdline)}\n[${status}] (full log: ${logRel})\n\n${tail(outcome.output) || "(no output)"}`;
+			// outcome.cmdline is already redacted by runFixedTee, so the echo AND details are both safe.
+			const text = `$ ${outcome.cmdline}\n[${status}] (full log: ${logRel})\n\n${tail(outcome.output) || "(no output)"}`;
 			return {
 				content: [{ type: "text", text }],
 				details: { experiment: name, exitCode: outcome.exitCode, timedOut: outcome.timedOut, logFile: logRel, cmdline: outcome.cmdline },
