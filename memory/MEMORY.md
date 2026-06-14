@@ -29,6 +29,8 @@ sharing one allowlist + one redactor via `harness/pi/shared/`.
 
 ## Index — where detail lives
 - Build report + live-pi FLAG status → `BUILD-REPORT.md`
+- Hand to an independent verifier (on an authed pi) → `VERIFICATION-AGENT-PROMPT.md`
+- How to use the system (worked session + config) → `README.md`
 - Architecture / module map → `memory/architecture.md`
 - Why behind decisions → `memory/decisions.md`
 - Current plan / task slice → `memory/tasks.md`

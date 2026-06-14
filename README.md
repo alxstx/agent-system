@@ -121,6 +121,76 @@ thinking. GPT-5.5 needs the OpenAI provider authenticated in pi (else `/verify` 
 Only the short summaries cross back into your main session — the expensive
 repo-reading stays inside the sub-agents and on disk.
 
+## Using the system (a typical session)
+
+Open `pi` in your harnessed repo. A normal feature loop:
+
+```text
+# 1. Plan — an isolated agent explores and writes the roadmap + the next slice.
+/plan health-endpoint add a /health route to the operator HTTP server
+      → memory/plan-health-endpoint.md (durable) + memory/tasks.md (this slice)
+      → you review/edit those two files
+
+# 2. Implement — ordinary work in your main session (full tools). command-guard and
+#    secret-redaction are watching: a stray `rm -rf` or a write into a boundary path is
+#    blocked (run /guard off to override); secrets in tool output are [REDACTED].
+#    Editing a file covered by .github/instructions/*.instructions.md surfaces that rule.
+
+# 3. Preflight — run the project checks inline, no sub-agent, no tokens.
+/checks                 # all project checks → green/red widget
+/checks lint            # just one
+
+# 4. Verify — an adversarial GPT-5.5 agent judges the diff vs the plan + slice.
+/verify                 # → memory/verdict.md, PASS / PASS WITH NITS / FAIL
+
+# 5. (optional) Run + watch an experiment, then write it up.
+/monitor smoke-bench    # → memory/monitor-<run>.md (OK/ERROR) + memory/runs/<run>.log
+/report health-endpoint --for=team
+                        # → memory/reports/health-endpoint-<date>.md
+
+# When something breaks, or you have an open question:
+/triage logs/run_4412.txt only started failing today   # → memory/triage-<id>.md
+/research zod is zod or valibot smaller for a client bundle?  # → memory/research-zod.md
+```
+
+**When to reach for which:**
+
+| You want to… | Use | Writes |
+|---|---|---|
+| Plan a feature / next slice | `/plan <feature> <task>` | `memory/plan-<feature>.md` + `tasks.md` |
+| Sanity-check before review | `/checks [name]` | (UI only) |
+| Adversarially review a change | `/verify [feature] [note]` | `memory/verdict.md` |
+| Diagnose a failing run | `/triage [<log>] [note]` | `memory/triage-<id>.md` |
+| Run + watch an experiment | `/monitor <experiment> [note]` | `memory/monitor-<run>.md` (+ log) |
+| Write it up for an audience | `/report <subject> [--for=…]` | `memory/reports/<subject>-<date>.md` |
+| Research a web question | `/research <topic> <question>` | `memory/research-<topic>.md` |
+| Toggle the destructive-command guard | `/guard on\|off` | (session state) |
+
+### Configure it (all per-repo, no code changes)
+
+- **`harness/checks.json`** — three allowlists the engine reads at run time:
+  - `checks` / `testFile` — the commands `/verify`'s `run_check` and `/checks` may run (fixed argv, `shell:false`).
+  - `boundaries` — JS regexes (repo-root-relative) of paths **command-guard** blocks writes into. Keep in sync with AGENTS.md's "Boundaries" prose.
+  - `experiments` — the closed allowlist of long-lived runs `/monitor` may launch.
+  - `blamePathRegex` (optional) — tightens `/triage`'s `git-blame` path validation.
+  See `harness/examples/checks.python-lmcache.json` for a full worked example.
+- **`harness/redaction.json`** (optional) — `{ replacement, extraPatterns, disableDefault }` to tune what secret-redaction (and the `/monitor` log tee) scrub.
+- **`.github/instructions/*.instructions.md`** — path-scoped rules (`applyTo:` glob in frontmatter) that boundary-instructions surfaces when a matching file is edited.
+- **`.pi/mcp.json`** (copy of `harness/mcp.example.json`) — enables the arXiv MCP.
+
+### Requirements & models
+
+- pi on **Node ≥ 22.19**; install the extensions with `harness/pi/install.sh`, then `/reload`.
+- Reviewing agents (`/verify`) run on **GPT-5.5** → authenticate the **OpenAI** provider, or `/verify`
+  errors. All other roles run on **Opus 4.8** → authenticate **Anthropic**. Both at `xhigh` thinking.
+  Change the ids in one place: the `MODEL_DEFAULT` / `MODEL_REVIEW` constants in
+  `harness/pi/subagents/index.ts`.
+- `/research` needs `pi install npm:pi-web-access`; the arXiv MCP needs `pi install npm:pi-mcp-adapter`
+  + `uv tool install 'arxiv-mcp-server[pdf]'`.
+
+> Verifying a fresh build? Hand `VERIFICATION-AGENT-PROMPT.md` to an independent agent on an
+> authenticated pi — it re-runs the structural checks **and** the live model-driven FLAG tests.
+
 ## How it stays generic
 
 The pi engine code (`harness/pi/subagents/`) contains **no project-specific
