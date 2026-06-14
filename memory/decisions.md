@@ -20,8 +20,9 @@
 
 ## 2026-06-14 — Per-role model policy (verify=GPT-5.5, rest=Opus 4.8, xhigh)
 - **Decision:** `runSubagent` always passes `--model` + `--thinking xhigh`; ids in two constants in
-  `index.ts`. **Trade-off:** GPT-5.5 adds an OpenAI-auth prerequisite for `/verify`; documented + the
-  handler surfaces a load error. Exact id strings are a live-pi FLAG (`pi --list-models`).
+  `index.ts`. **Trade-off:** the operator must authenticate pi first (GitHub Copilot login is enough
+  when it lists these models), then the ids are just model selections. Exact id strings remain a
+  live-pi FLAG (`pi --list-models`); the handler surfaces a load error if a selected model is absent.
 
 ## 2026-06-14 — Repo-root-relative path matching
 - **Decision:** command-guard boundaries and boundary-instructions `applyTo` match the target's path

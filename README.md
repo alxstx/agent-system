@@ -55,8 +55,8 @@ no pi required); do it if you want the real sub-agent commands.
    # …or, on macOS / Linux:
    curl -fsSL https://pi.dev/install.sh | sh
    ```
-3. **Authenticate.** Launch `pi`, then provide a provider API key *or* use a
-   subscription login:
+3. **Authenticate.** Launch `pi`, then use a subscription login (GitHub Copilot
+   works for the model selections below) or provide provider API keys:
    ```bash
    export ANTHROPIC_API_KEY=sk-ant-...   # or OPENAI_API_KEY, GEMINI_API_KEY, …
    pi
@@ -64,7 +64,8 @@ no pi required); do it if you want the real sub-agent commands.
    …or run `/login` inside pi (Claude Pro/Max, ChatGPT Plus/Pro, or GitHub
    Copilot). Credentials live in `~/.pi/agent/auth.json`; settings in
    `~/.pi/agent/settings.json`.
-4. **Pick a model** inside pi with `/model` (or `Ctrl+L`).
+4. **Confirm model selections** with `pi --list-models`, then pick a model inside
+   pi with `/model` (or `Ctrl+L`).
 
 `pi` is now on your `PATH`. Full docs: <https://pi.dev/docs/latest>.
 
@@ -109,7 +110,8 @@ no pi required); do it if you want the real sub-agent commands.
 - **`/research <topic> <question>`** — web-researches a cited, claim-checked note → `memory/research-<topic>.md` (needs `pi install npm:pi-web-access`).
 
 Reviewing agents (`/verify`) run on **GPT-5.5**; all others on **Opus 4.8**; both at `xhigh`
-thinking. GPT-5.5 needs the OpenAI provider authenticated in pi (else `/verify` errors).
+thinking. After authenticating pi (for example with GitHub Copilot), these are just model
+selections; confirm the exact ids with `pi --list-models`.
 
 **Main-session extensions** (govern the human-driven session; sub-agents are immune):
 
@@ -181,10 +183,11 @@ Open `pi` in your harnessed repo. A normal feature loop:
 ### Requirements & models
 
 - pi on **Node ≥ 22.19**; install the extensions with `harness/pi/install.sh`, then `/reload`.
-- Reviewing agents (`/verify`) run on **GPT-5.5** → authenticate the **OpenAI** provider, or `/verify`
-  errors. All other roles run on **Opus 4.8** → authenticate **Anthropic**. Both at `xhigh` thinking.
-  Change the ids in one place: the `MODEL_DEFAULT` / `MODEL_REVIEW` constants in
-  `harness/pi/subagents/index.ts`.
+- Reviewing agents (`/verify`) run on **GPT-5.5**; all other roles run on **Opus 4.8**.
+  Authenticate pi first (GitHub Copilot subscription login is enough when those models are listed),
+  then treat `anthropic/opus-4.8` and `openai/gpt-5.5` as model selections to confirm with
+  `pi --list-models`. Change the ids in one place: the `MODEL_DEFAULT` / `MODEL_REVIEW`
+  constants in `harness/pi/subagents/index.ts`.
 - `/research` needs `pi install npm:pi-web-access`; the arXiv MCP needs `pi install npm:pi-mcp-adapter`
   + `uv tool install 'arxiv-mcp-server[pdf]'`.
 

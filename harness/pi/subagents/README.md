@@ -22,10 +22,9 @@ Every sub-agent is spawned with an explicit `--model` and `--thinking xhigh`:
 | `/plan`, `/triage`, `/monitor`, `/report`, `/research` | default | **Opus 4.8** (`MODEL_DEFAULT`) |
 
 The ids live in two constants at the top of `index.ts` — change them in ONE place if `pi --list-models`
-shows different canonical strings. **Provider auth:** GPT-5.5 means the **OpenAI provider must be
-authenticated in pi** (`OPENAI_API_KEY` or `/login`) or the Verifier subprocess errors out; the
-default (Opus) needs Anthropic auth. If a model can't load, the handler surfaces the subprocess error
-via `ctx.ui.notify`.
+shows different canonical strings. Authenticate pi first (for example with GitHub Copilot via
+`/login`); after that, GPT-5.5 and Opus 4.8 are model selections. If a selected model can't load, the
+handler surfaces the subprocess error via `ctx.ui.notify`.
 
 ### The other roles (same 3-part wiring)
 

@@ -1,7 +1,7 @@
 # Prompt — Independent Verification Agent
 
 Hand the block below to a FRESH agent (no shared context) running where a **live, authenticated pi**
-is available. Unlike the build environment (which had no provider credentials), this agent can run the
+is available. Unlike the build environment (which had no pi login/model access), this agent can run the
 model-driven tests — so it must actually exercise the live-pi FLAG items, not just the offline ones.
 
 ---
@@ -15,10 +15,11 @@ something you actually ran or read (cite `file:line` or paste the command + outp
 ## Setup (do this first; report any step that fails)
 1. **Toolchain:** Node **≥ 22.19** (`node -v`), pi installed (`pi --version`), TypeScript available.
 2. **Get the code:** clone the repo (or `cd` into it), `git checkout feat/roles-and-extensions`.
-3. **Provider auth (REQUIRED for the live tests):** authenticate BOTH providers in pi — Anthropic
-   (for Opus 4.8, used by /plan /triage /monitor /report /research) AND OpenAI (for GPT-5.5, used by
-   /verify): `export ANTHROPIC_API_KEY=… OPENAI_API_KEY=…` or `/login`. Run `pi --list-models` and
-   record whether `anthropic/opus-4.8` and `openai/gpt-5.5` are listed (FLAG #2).
+3. **pi auth (REQUIRED for the live tests):** authenticate pi first — GitHub Copilot via `/login`
+   is sufficient when it exposes the target models. Then run `pi --list-models` and record whether
+   `anthropic/opus-4.8` (for /plan /triage /monitor /report /research) and `openai/gpt-5.5` (for
+   /verify) are listed as selectable models (FLAG #2). If those exact ids differ, update only the
+   constants in `harness/pi/subagents/index.ts`.
 4. **Optional capabilities** (needed for /research + MCP tests): `pi install npm:pi-web-access`,
    `pi install npm:pi-mcp-adapter`, `uv tool install 'arxiv-mcp-server[pdf]'`,
    `cp harness/mcp.example.json .pi/mcp.json`.

@@ -7,6 +7,8 @@ The harness is a pi extension suite: 6 sub-agent roles (/plan /verify /triage /m
 sharing one allowlist + one redactor via `harness/pi/shared/`.
 
 ## Recent changes (newest first — keep ~7 max)
+- 2026-06-14 — Corrected model-auth docs: GPT-5.5/Opus 4.8 are pi model selections after auth
+  (GitHub Copilot login is enough when listed), not separate OpenAI/Anthropic auth prerequisites.
 - 2026-06-14 — Built /triage /monitor /report /research roles + command-guard / secret-redaction /
   /checks / boundary-instructions extensions; extracted `harness/pi/shared/{checks-core,redact}.ts`;
   generalized `install.sh` (loops all `harness/pi/<ext>/` + installs `shared/`). See `BUILD-REPORT.md`.

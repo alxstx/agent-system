@@ -6,7 +6,8 @@
 `feat/roles-and-extensions`. See `BUILD-REPORT.md` for status and the live-pi FLAG list.)
 
 ## Deferred / follow-ups (not built this pass — track here, don't scope-creep)
-- **Live-pi FLAG confirmations** (need a provider-authenticated pi on Node ≥22.19): see `BUILD-REPORT.md`
+- **Live-pi FLAG confirmations** (need an authenticated pi on Node ≥22.19; GitHub Copilot login is
+  sufficient when the target models are listed): see `BUILD-REPORT.md`
   — model ids via `pi --list-models`; `/research` web_search actually returning results; `deliverAs:"steer"`
   landing before the edit (else flip boundary-instructions to `{block:true}`); `/mcp` listing arxiv.
 - **auto-report hook** — the "always write a doc after an experiment" automation: a `pi.on('message')`

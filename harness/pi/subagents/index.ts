@@ -52,8 +52,9 @@ const MAX_DIFF_BYTES = 150 * 1024;
 // Phase 0.5 — per-role model & thinking policy (one place; don't scatter ids).
 // Reviewing/adversarial-judge agents run on GPT-5.5; every other sub-agent runs on
 // Opus 4.8; both at "xhigh" thinking. Passed to runSubagent per role (see the role map
-// in the README). The exact model-id strings are FLAG-to-verify on a live pi
-// (`pi --list-models`); if one isn't listed, update ONLY the constant below.
+// in the README). After pi auth (for example GitHub Copilot login), these ids are model
+// selections; verify exact strings with `pi --list-models`. If one isn't listed, update
+// ONLY the constant below.
 const EFFORT = "xhigh";
 const MODEL_DEFAULT = "anthropic/opus-4.8"; // plan, monitor, triage, research, report
 const MODEL_REVIEW = "openai/gpt-5.5"; // the reviewing/adversarial-judge agents (verify)
