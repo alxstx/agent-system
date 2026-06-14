@@ -1,0 +1,18 @@
+{
+  "//": "DEV-ONLY type-check config for the pi extensions. Runtime loading is via jiti (uncompiled TS); this only powers `npm run typecheck`. moduleResolution=Bundler mirrors jiti's behavior: relative imports may use a .js specifier that resolves to the .ts source (e.g. ../shared/redact.js).",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "types": ["node"]
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules"]
+}

@@ -6,3 +6,6 @@ Thumbs.db
 # Node (pi extension under harness/pi)
 node_modules/
 *.log
+
+# Dev-only typecheck workspace lockfile (deps pinned in harness/pi/package.json; npm install regenerates)
+harness/pi/package-lock.json

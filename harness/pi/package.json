@@ -1,0 +1,16 @@
+{
+  "name": "agent-system-harness-pi",
+  "private": true,
+  "type": "module",
+  "description": "DEV-ONLY workspace for type-checking the pi extensions under harness/pi/. The extensions themselves ship as uncompiled TypeScript and are loaded by pi via jiti (no build step); these devDependencies + tsconfig.json exist only so `npm run typecheck` can validate them against the real pi types. Not required at runtime.",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.79.3",
+    "@earendil-works/pi-ai": "0.79.3",
+    "typebox": "1.1.38",
+    "@types/node": "^22",
+    "typescript": "^5"
+  }
+}
