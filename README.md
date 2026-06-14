@@ -109,6 +109,11 @@ no pi required); do it if you want the real sub-agent commands.
 - **`/report <subject> [--for=team|paper|self]`** — composes an audience-facing document from artifacts → `memory/reports/<subject>-<date>.md`.
 - **`/research <topic> <question>`** — web-researches a cited, claim-checked note → `memory/research-<topic>.md` (needs `pi install npm:pi-web-access`).
 
+A role's **only execution surface** is an allowlisted runner (`harness/pi/subagents/runner.ts`):
+`run_check` (named checks from `harness/checks.json` — used by `/verify`, `/triage`) and
+`run_experiment` (the `experiments` allowlist — used by `/monitor`), both fixed-argv with `shell:false`.
+No role ever gets `bash` or `edit`.
+
 Reviewing agents (`/verify`) run on **GPT-5.5**; all others on **Opus 4.8**; both at `xhigh`
 thinking. GPT-5.5 needs the OpenAI provider authenticated in pi (else `/verify` errors).
 
@@ -124,6 +129,10 @@ are unaffected until filled.
 - **secret-redaction** — scrubs secret-shaped strings from tool output before the model sees them.
 - **`/checks [name]`** — runs the `checks.json` allowlist inline (no sub-agent, no tokens) → green/red widget.
 - **boundary-instructions** — surfaces `.github/instructions/*.instructions.md` rules when a matching file is edited.
+
+Also from the engine: **`/enrich <role> <rule>`** (main session) edits the per-role context files
+described above — no sub-agent, just a file write. And enabling the arXiv MCP (install step 5) adds
+pi's **`/mcp`** + **`/mcp-auth`** commands via the adapter.
 
 Only the short summaries cross back into your main session — the expensive
 repo-reading stays inside the sub-agents and on disk.
@@ -196,8 +205,8 @@ Open `pi` in your harnessed repo. A normal feature loop:
 - `/research` needs `pi install npm:pi-web-access`; the arXiv MCP needs `pi install npm:pi-mcp-adapter`
   + `uv tool install 'arxiv-mcp-server[pdf]'`.
 
-> Verifying a fresh build? Hand `VERIFICATION-AGENT-PROMPT.md` to an independent agent on an
-> authenticated pi — it re-runs the structural checks **and** the live model-driven FLAG tests.
+> Testing a fresh install? Work through **`TESTING.md`** on an authenticated pi — a hands-on
+> checklist that exercises every feature (all roles, `/enrich`, the main-session extensions, MCP).
 
 ## How it stays generic
 

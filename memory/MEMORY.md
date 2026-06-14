@@ -13,7 +13,7 @@ sharing one allowlist + one redactor via `harness/pi/shared/`. Each role also lo
   the generic methodology (`readContext`); comment-only ⇒ nothing injected. AGENTS.md just points at it.
 - 2026-06-14 — Built /triage /monitor /report /research roles + command-guard / secret-redaction /
   /checks / boundary-instructions extensions; extracted `harness/pi/shared/{checks-core,redact}.ts`;
-  generalized `install.sh` (loops all `harness/pi/<ext>/` + installs `shared/`). See `BUILD-REPORT.md`.
+  generalized `install.sh` (loops all `harness/pi/<ext>/` + installs `shared/`). Validate via `TESTING.md`.
 - 2026-06-14 — Phase 0.5: per-role model policy wired into `runSubagent` (/verify→GPT-5.5, rest→Opus
   4.8, `--thinking xhigh`); Phase 0 dead temp-file code removed from `index.ts`.
 
@@ -32,8 +32,7 @@ sharing one allowlist + one redactor via `harness/pi/shared/`. Each role also lo
   this is a live-pi FLAG (rule may not reach the model before the edit; `{block:true}` is the fallback).
 
 ## Index — where detail lives
-- Build report + live-pi FLAG status → `BUILD-REPORT.md`
-- Hand to an independent verifier (on an authed pi) → `VERIFICATION-AGENT-PROMPT.md`
+- Test every feature on a real pi (hands-on checklist) → `TESTING.md`
 - How to use the system (worked session + config) → `README.md`
 - Architecture / module map → `memory/architecture.md`
 - Why behind decisions → `memory/decisions.md`
