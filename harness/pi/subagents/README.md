@@ -5,12 +5,36 @@ workflow as real `/plan` and `/verify` commands. It mirrors the same methodology
 the markdown harness uses for GitHub Copilot, reading the *same* markdown
 (`AGENTS.md`, `harness/prompts/*.md`, `memory/`) so the two harnesses never drift.
 
-- **Canonical source (version-controlled):** `harness/pi/subagents/` (`index.ts` + `runner.ts`),
-  with the shared core in `harness/pi/shared/` (`checks-core.ts` + `redact.ts`)
+- **Canonical source (version-controlled):** `harness/pi/subagents/` (`index.ts` + `runner.ts`
+  + `userturns.ts`), with the shared core in `harness/pi/shared/` (`subagent-core.ts` +
+  `checks-core.ts` + `redact.ts`)
 - **Install into pi:** `harness/pi/install.sh` → links/copies every `harness/pi/<ext>/` + `shared/`
   into `~/.pi/agent/extensions/`
 - **Commands:** `/plan`, `/verify`, `/triage`, `/monitor`, `/report`, `/research` (this engine);
   plus `/checks` and `/guard` from the sibling extensions
+
+### Two ways to invoke a role
+
+Every role is reachable two ways — both funnel through the SAME isolated-sub-agent
+core (`runXRole` in `index.ts`), so they explore the repo, write their own file, and
+return only a ≤10-line summary identically. They differ only at the seam:
+
+| Mode | How | Result delivery | Timeout / abort |
+|---|---|---|---|
+| **Command** (operator) | you type `/<role> …` | ≤10-line SUMMARY posted to the session on the **next turn** (`deliverAs:"nextTurn"`) | none (unchanged) |
+| **Tool** (the model) | the model calls **`subagent_<role>`** mid-turn | the SUMMARY is the tool result the model sees **in the same turn** | wall-clock timeout + `ctx.signal` |
+
+- **Tool names are namespaced** (`subagent_plan` / `subagent_verify` / `subagent_triage` /
+  `subagent_monitor` / `subagent_report` / `subagent_research`). The `subagent_` prefix is
+  mandatory: pi's tool registry is **last-write-wins with no collision error**, so an un-prefixed
+  name (e.g. `verify`) would silently shadow a built-in or sibling tool.
+- On failure a `subagent_<role>` tool **throws** a short, redaction-safe error (a *returned*
+  `isError:true` is inert — only a thrown error marks the tool result failed). The artifact still
+  lives on disk; only the summary (or the error) crosses back.
+- The model can spawn these mid-turn, so the extension arms a `session_shutdown` guard that
+  SIGTERM→SIGKILLs any live child on `/reload`/quit (`ctx.signal` covers operator-abort only).
+- *(Coming in a later slice: a third `/<role>-main` mode that runs the **main** session under a
+  role's methodology.)*
 
 ### Per-role model & effort (Phase 0.5)
 
@@ -245,9 +269,12 @@ methodology, and both this harness and your Copilot agents stay in sync.
 - **"No memory/tasks.md to verify against"** — run `/plan` first, or create the
   plan file manually.
 - **Planner/Verifier seems to hang** — real repo exploration can take a few
-  minutes; the footer shows live `turn N (toolname)…` progress. There is no
-  artificial timeout on the sub-agent itself (only individual `run_check`
-  commands have timeouts).
+  minutes; the footer shows live `turn N (toolname)…` progress. In **command-mode**
+  there is no artificial timeout on the sub-agent itself (only individual `run_check`
+  commands have timeouts). In **tool-mode** (a model-invoked `subagent_<role>`) a
+  wall-clock timeout bounds the spawn — 15 min for most roles, and the experiment's
+  own `timeoutMs` + a buffer for `subagent_monitor` — after which the child is killed
+  and the tool reports a timeout.
 - **A test/lint tool isn't found** — ensure the project venv exists
   (`uv venv && source .venv/bin/activate`, then install test deps), or that the
   tools are on your `PATH`, or that `env.venvBinDir` in `harness/checks.json`
@@ -263,9 +290,13 @@ methodology, and both this harness and your Copilot agents stay in sync.
 ```
 harness/pi/
 ├── install.sh              # link/copy the engine into ~/.pi/agent/extensions/
+├── shared/
+│   └── subagent-core.ts    # runSubagent + the live-children shutdown guard + extractSummary (reused)
 └── subagents/
-    ├── index.ts            # /plan + /verify commands; spawns sub-agents, writes files, posts summaries
-    ├── runner.ts           # run_check tool (reads harness/checks.json) — loaded only into the Verifier
+    ├── index.ts            # the 6 /<role> commands AND the 6 subagent_<role> tools; shared runXRole core
+    ├── userturns.ts        # pure slug + handoff + first-user-turn builders (offline-tested)
+    ├── userturns.test.ts   # offline unit tests for the builders
+    ├── runner.ts           # run_check / run_experiment tools (reads harness/checks.json) — loaded into the sub-agent
     └── README.md           # this file
 
 harness/checks.json         # per-repo check definitions consumed by runner.ts
