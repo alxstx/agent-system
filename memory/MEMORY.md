@@ -21,9 +21,16 @@ mid-execute when `hasUI=true` (NIT-3, via RPC). Only the cosmetic TUI modal *ren
 Other live FLAGs (slice-2/4 smokes) can now run the same keyless way; subscription `/login` no longer required.
 **Also in flight — dual-mode subagents** (`memory/plan-subagent-dual-mode.md`): make every role model-callable
 mid-turn + add `/<role>-main` + switch models to Copilot-only. Slices 1 (tool-mode `subagent_*`) + 2 (Copilot
-ids + repo-wide guard) BUILT; slices 3 (gate config) + 4 (`/<role>-main`) pending. Pausing for review between slices.
+ids + repo-wide guard) + 3 (auto-judge gate config) BUILT; slice 4 (`/<role>-main`) pending. Pausing for review between slices.
 
 ## Recent changes (newest first — keep ~7 max)
+- 2026-06-21 — **Dual-mode slice 3 BUILT (auto-judge gate config).** Added the six EXACT role-tool names
+  (`subagent_plan/verify/triage/monitor/report/research`) to `autoJudge.guardedTools` in `harness/checks.json`
+  + the python-lmcache example (alongside `delegate`); `contextDiff` stays false (cost, N8); `$autoJudge-note`
+  documents the posture (auto-judge-only gating, no hard cap, exact-match → typo silently un-gates). New
+  offline **drift guard** `subagents/gate-config.test.ts` (4 tests): the `subagent_*` names REGISTERED in
+  index.ts == those GUARDED in both checks.json files, + contextDiff false; negative-tested (drop a name → FAIL).
+  typecheck clean, **110 tests**. See `memory/plan-subagent-dual-mode.md`.
 - 2026-06-21 — **Dual-mode slice 2 BUILT (Copilot-only model ids + repo-wide guard).** `MODEL_DEFAULT`/
   `MODEL_REVIEW` in `shared/subagent-core.ts` → `github-copilot/claude-opus-4.8` / `github-copilot/gpt-5.5`
   (auto-judge + subagents import them — ONE place, no per-file edits). Swept the stale direct ids from 4
@@ -35,6 +42,14 @@ ids + repo-wide guard) BUILT; slices 3 (gate config) + 4 (`/<role>-main`) pendin
   are UNVERIFIED — this node has only `anthropic`+`ollama`
   providers (no `github-copilot`); id format (`4.8` dotted vs live anthropic `4-8` dashed) also unconfirmed.
   Confirm via `pi --list-models` on a Copilot node. See `memory/plan-subagent-dual-mode.md`.
+- 2026-06-21 — **workflow slice 2 BUILT** (the tool; offline-gated, review-clean). `workflow/index.ts` =
+  `registerTool("workflow")`: schema + execute-time `normalizeTasks` refuse; per-request cap (reset on
+  agent_start); `hasUI` confirm; `rightSize` governor → `runPool` → read-only workers (`runSubagent`,
+  fed `objective`, per-worker timeout via `AbortSignal.any`); **`redactOnWrite`** capped files at
+  `memory/workflow/<runId>/<i>-<slug>.md` (`workflowSeq`+`<i>` uniqueness, `paths.ts` validator); compact
+  index back, `details` metadata-only; opt-in synth over already-redacted files. `harness/prompts/workflow.md`.
+  **106 tests** (+4 paths); review folded 1 minor (the standalone `mkdirSync` + synth fs writes now guarded
+  → partial index survives an fs throw — plan NIT-1). workflow symlinked. Next: slice 3 (block+docs), slice 4 (live smoke).
 - 2026-06-21 — **workflow slices 0–1 BUILT** (governed parallel fan-out; offline-gated). Slice 0: `runJudge`
   moved to `subagent-core.ts` (auto-judge's 2nd dup gone). Slice 1 — `harness/pi/workflow/`: `config.ts`
   (`loadWorkflowConfig`, verdict.ts rigor — maxParallel ceiling 8 = kill-switch, concurrency clamped to

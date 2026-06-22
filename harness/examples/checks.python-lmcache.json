@@ -40,5 +40,20 @@
   "experiments": {
     "smoke-bench": { "cmd": "python", "args": ["bench/run.py", "--config", "configs/smoke.yaml"], "timeoutMs": 1800000 },
     "lmcache-throughput": { "cmd": "python", "args": ["bench/throughput.py", "--duration", "600"], "timeoutMs": 900000 }
+  },
+  "autoJudge": {
+    "judgeModel": "",
+    "guardedTools": ["bash", "write", "edit", "delegate", "subagent_plan", "subagent_verify", "subagent_triage", "subagent_monitor", "subagent_report", "subagent_research"],
+    "failClosed": true,
+    "timeoutMs": 20000,
+    "contextDiff": true,
+    "policy": "Allow routine Python work: editing source/tests in the repo and running pytest/ruff/mypy. DENY: rm -rf and other destructive/irreversible shell; git push --force, git reset --hard, history rewrites; writes outside the repo or into .venv/dist/migrations/generated paths; package install/upgrade; network calls that send code or data off-box; and any command embedding a secret-shaped token. When unsure, deny."
+  },
+  "delegate": {
+    "maxCallsPerRequest": 3,
+    "confirmOnSpawn": true,
+    "model": "",
+    "effort": "",
+    "capBytes": 16384
   }
 }

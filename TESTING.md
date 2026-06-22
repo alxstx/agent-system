@@ -28,6 +28,7 @@ cd harness/pi && npm install && npm run typecheck && npm test
 |---|---|
 | `harness/pi/shared/subagent-core.test.ts` | `extractSummary` (the `## SUMMARY` grammar that crosses back to the main session); `cleanDetails` (metadata-only `details` filter — secret-redaction never scrubs `details`); `redactOnWrite` (redact-then-byte-cap before any disk write) |
 | `harness/pi/subagents/userturns.test.ts` | `slugify`; the six per-role `handoff*` contracts; the six per-role first-user-turn builders. These are the **dual-mode** seam — command-mode and tool-mode build byte-identical prompts from here |
+| `harness/pi/subagents/gate-config.test.ts` | Drift guard: the six `subagent_*` tools registered in `index.ts` are EXACTLY the ones gated in `harness/checks.json` (+ the example) `autoJudge.guardedTools`, and `contextDiff` stays false. The gate is exact-match — a typo silently un-gates a model-driven spawn, so this pins it |
 | `harness/pi/auto-judge/verdict.test.ts` | `parseVerdict` (fail-closed ALLOW/DENY grammar); `loadAutoJudgeConfig` (defaults + validation, crafted `checks.json` under temp dirs) |
 | `harness/pi/delegate/config.test.ts` | `delegate` tool config loader (read-only general sub-agent) |
 | `harness/pi/workflow/config.test.ts`, `harness/pi/workflow/right-size.test.ts` | `workflow` config + the governor's fan-out right-sizer |
