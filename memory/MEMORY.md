@@ -19,11 +19,22 @@ PROVEN via a local keyless model** (Ollama `llama3.1:8b` in `~/.pi/agent/models.
 main model calls a main-session `registerTool` tool (Claim 1, `--mode json` + RPC); `ctx.ui.confirm` blocks
 mid-execute when `hasUI=true` (NIT-3, via RPC). Only the cosmetic TUI modal *render* needs human eyes.
 Other live FLAGs (slice-2/4 smokes) can now run the same keyless way; subscription `/login` no longer required.
-**Also in flight — dual-mode subagents** (`memory/plan-subagent-dual-mode.md`): make every role model-callable
-mid-turn + add `/<role>-main` + switch models to Copilot-only. Slices 1 (tool-mode `subagent_*`) + 2 (Copilot
-ids + repo-wide guard) + 3 (auto-judge gate config) BUILT; slice 4 (`/<role>-main`) pending. Pausing for review between slices.
+**Also done — dual-mode subagents** (`memory/plan-subagent-dual-mode.md`): every role is model-callable
+mid-turn (`subagent_*`) + `/<role>-main` in-session modes + Copilot-only models. **All 4 slices BUILT
+(offline-gated).** Remaining: live-pi smokes (tool-mode round-trip, `/verify-main` survives /reload,
+gate) — keyless-runnable but model-quality-limited (see `TESTING.md`); + the Copilot-id live FLAG.
 
 ## Recent changes (newest first — keep ~7 max)
+- 2026-06-21 — **Dual-mode slice 4 BUILT (`/<role>-main` in-session modes) — feature COMPLETE.** New pure
+  `subagents/role-main.ts` (tool-clamp tables + the load-bearing `isToolBlockedInRoleMain` gate predicate +
+  on/off parser; no `.js` imports → bare-node-testable). 4a: `/plan|verify|triage|report-main on|off` —
+  single-slot `activeRole`, snapshot→clamp tools (`setActiveTools`), `before_agent_start` injects BODY-ONLY
+  (F1), `tool_call` block-gate (load-bearing), **persist via `appendEntry` + restore on `session_start`**
+  (re-clamp + re-arm) + null→full safety net (N2). 4b: `/monitor-main`+`/research-main` = isolated
+  sub-agent (shared `monitorCmd`/`researchCmd` + `postXOutcome` helpers). **F2:** stripped the terminal
+  file/SUMMARY contract from triage.md + report.md bodies (it stays in the `handoff*` builders → isolated
+  sub-agent unchanged). `run_check` is sub-agent-only → silently dropped from verify/triage-main clamp
+  (documented). +8 tests (**118**), typecheck clean. README/TESTING/decisions updated. See `memory/plan-subagent-dual-mode.md`.
 - 2026-06-21 — **Dual-mode slice 3 BUILT (auto-judge gate config).** Added the six EXACT role-tool names
   (`subagent_plan/verify/triage/monitor/report/research`) to `autoJudge.guardedTools` in `harness/checks.json`
   + the python-lmcache example (alongside `delegate`); `contextDiff` stays false (cost, N8); `$autoJudge-note`
@@ -49,7 +60,10 @@ ids + repo-wide guard) + 3 (auto-judge gate config) BUILT; slice 4 (`/<role>-mai
   `memory/workflow/<runId>/<i>-<slug>.md` (`workflowSeq`+`<i>` uniqueness, `paths.ts` validator); compact
   index back, `details` metadata-only; opt-in synth over already-redacted files. `harness/prompts/workflow.md`.
   **106 tests** (+4 paths); review folded 1 minor (the standalone `mkdirSync` + synth fs writes now guarded
-  → partial index survives an fs throw — plan NIT-1). workflow symlinked. Next: slice 3 (block+docs), slice 4 (live smoke).
+  → partial index survives an fs throw — plan NIT-1). workflow symlinked. **Slice 3 DONE** (review-clean,
+  0 findings): `workflow` block + `$workflow-note` in checks.json + the python-lmcache example, `"workflow"`
+  in `autoJudge.guardedTools` (both files); doc reconciliation (README/architecture/glossary/subagents-README/
+  AGENTS+template) + `decisions.md` entry. **110 tests.** Next: slice 4 (keyless live fan-out smoke).
 - 2026-06-21 — **workflow slices 0–1 BUILT** (governed parallel fan-out; offline-gated). Slice 0: `runJudge`
   moved to `subagent-core.ts` (auto-judge's 2nd dup gone). Slice 1 — `harness/pi/workflow/`: `config.ts`
   (`loadWorkflowConfig`, verdict.ts rigor — maxParallel ceiling 8 = kill-switch, concurrency clamped to

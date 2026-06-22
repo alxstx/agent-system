@@ -24,16 +24,11 @@ Do not edit anything. Do not dump the repo — read only the frames the failure 
 Top hypothesis = a single uppercase label + confidence (high/med/low). Confidence is high only if a
 probe or the trace directly supports it; otherwise med/low. Always name what would falsify #1.
 
-## Output — write to memory/triage-<id>.md
+## Output (the shape of a good triage)
 Failure (one line) · Hypotheses (ranked, each: label — confidence — evidence with file:line) ·
 Next probe (one, with the exact run_check invocation + what each outcome would prove) · Ruled out.
 
-The handoff allows exactly ONE file — write only memory/triage-<id>.md, never memory/MEMORY.md.
-If you found a durable lesson (a real gotcha), name it in your SUMMARY for the operator to file.
-
-After the file is written, your final message must be a line exactly `## SUMMARY` whose FIRST
-token is the top hypothesis label (e.g. ENV-OOM), followed by AT MOST 10 lines of the key
-findings + the next probe. Nothing else after it.
+If you found a durable lesson (a real gotcha), name it for the operator to file.
 
 ## Stance
 Decisive but honest about uncertainty. One confident wrong hypothesis costs more than three ranked

@@ -64,6 +64,15 @@ import {
 	buildVerifyUserTurn,
 	slugify,
 } from "./userturns.js";
+import {
+	isRoleMain,
+	isToolBlockedInRoleMain,
+	parseOnOff,
+	ROLE_MAIN,
+	ROLE_MAIN_PROMPT,
+	ROLE_MAIN_TOOLS,
+	type RoleMain,
+} from "./role-main.js";
 
 const RUNNER_PATH = path.join(import.meta.dirname ?? __dirname, "runner.ts");
 
@@ -83,6 +92,32 @@ const MONITOR_TOOL_BUFFER_MS = 3 * 60 * 1000;
 // Module-scope monotonic counter for collision-resistant /monitor run ids (a ms timestamp can
 // still collide within the same millisecond; the counter disambiguates).
 let monitorSeq = 0;
+
+// ---------------------------------------------------------------------------
+// /<role>-main state (dual-mode slice 4). Single-slot: at most ONE in-session role is active.
+// Module-scope so it survives within a session; RESET to null when the module is re-instantiated on
+// /reload — which is exactly why it's persisted via pi.appendEntry and restored on session_start (N2).
+// ---------------------------------------------------------------------------
+const ROLE_MAIN_ENTRY = "subagent-role-main"; // appendEntry customType for persist/restore
+// Best-effort full set restored ONLY in the defensive path (no recorded snapshot but a clamp appears to
+// have leaked). The real restore uses the snapshot captured on `on` (preserving sibling extension tools).
+const ROLE_MAIN_FALLBACK_TOOLS = [
+	"read",
+	"bash",
+	"edit",
+	"write",
+	"grep",
+	"find",
+	"ls",
+	"subagent_plan",
+	"subagent_verify",
+	"subagent_triage",
+	"subagent_monitor",
+	"subagent_report",
+	"subagent_research",
+];
+let activeRoleMain: RoleMain | null = null;
+let savedMainTools: string[] | null = null; // the pre-clamp tool set, captured on `on`
 
 // /research web tools: pi-web-access, loaded into the sub-agent via -e (explicit -e still loads
 // under --no-extensions). It exposes web_search + fetch_content. Operator prerequisite:
@@ -767,6 +802,72 @@ function summaryResult(summary: string, details: Record<string, unknown>): Agent
 	return { content: [{ type: "text", text: summary }], details: cleanDetails(details) };
 }
 
+// Post a /monitor (or /monitor-main) outcome to the operator + the next turn. Shared so both the
+// command and its 4b -main alias deliver identically.
+function postMonitorOutcome(pi: ExtensionAPI, ctx: ExtensionCommandContext, r: MonitorOutcome): void {
+	if (r.kind === "invalid") {
+		ctx.ui.notify(r.reason, r.level);
+		return;
+	}
+	if (r.kind === "failed") {
+		const why = failReasonVerbose(r.res);
+		ctx.ui.notify(`Monitor failed: ${why}`, "error");
+		pi.sendMessage(
+			{
+				customType: "subagent-monitor",
+				content: `Monitor FAILED (${r.res.stopReason ?? `exit ${r.res.exitCode}`}): ${why}`,
+				display: true,
+			},
+			{ deliverAs: "nextTurn" },
+		);
+		return;
+	}
+	pi.sendMessage(
+		{
+			customType: "subagent-monitor",
+			content: `Monitor verdict (${r.expName}, ${r.res.turns} turns):\n\n${r.summary}\n\nFull report -> memory/monitor-${r.run}.md\nLog -> ${r.logRel}`,
+			display: true,
+			details: { verdict: r.verdictWord, experiment: r.expName, runId: r.run },
+		},
+		{ deliverAs: "nextTurn" },
+	);
+	ctx.ui.notify(
+		`Monitor: ${r.verdictWord} — written to memory/monitor-${r.run}.md`,
+		r.verdictWord === "ERROR" ? "warning" : "info",
+	);
+}
+
+// Post a /research (or /research-main) outcome. Shared by the command and its 4b -main alias.
+function postResearchOutcome(pi: ExtensionAPI, ctx: ExtensionCommandContext, r: ResearchOutcome): void {
+	if (r.kind === "invalid") {
+		ctx.ui.notify(r.reason, r.level);
+		return;
+	}
+	if (r.kind === "failed") {
+		const why = failReasonVerbose(r.res);
+		ctx.ui.notify(`Research failed: ${why}. (Web tools require: pi install npm:pi-web-access)`, "error");
+		pi.sendMessage(
+			{
+				customType: "subagent-research",
+				content: `Research FAILED (${r.res.stopReason ?? `exit ${r.res.exitCode}`}): ${why}`,
+				display: true,
+			},
+			{ deliverAs: "nextTurn" },
+		);
+		return;
+	}
+	pi.sendMessage(
+		{
+			customType: "subagent-research",
+			content: `Research summary (topic: ${r.slug}, ${r.res.turns} turns):\n\n${r.summary}\n\nFull note + citations -> memory/research-${r.slug}.md`,
+			display: true,
+			details: { verdict: r.verdictWord },
+		},
+		{ deliverAs: "nextTurn" },
+	);
+	ctx.ui.notify(`Research: ${r.verdictWord} — written to memory/research-${r.slug}.md`, "info");
+}
+
 // ---------------------------------------------------------------------------
 // Commands + tools
 // ---------------------------------------------------------------------------
@@ -929,55 +1030,32 @@ export default function subagents(pi: ExtensionAPI) {
 	});
 
 	// ----- /monitor -----
+	// /monitor and /monitor-main run the SAME isolated sub-agent. 4b: monitor's real tool
+	// (run_experiment) is subprocess-only, so `-main` can't be an in-session clamp — it spawns the
+	// isolated sub-agent and returns the summary, identical to /monitor.
+	const monitorCmd = async (args: string, ctx: ExtensionCommandContext) => {
+		const raw = args.trim();
+		const firstSpace = raw.search(/\s/);
+		const experiment = (firstSpace === -1 ? raw : raw.slice(0, firstSpace)).trim();
+		const note = firstSpace === -1 ? "" : raw.slice(firstSpace + 1).trim();
+		ctx.ui.setStatus("subagents", experiment ? `monitor: starting ${experiment}…` : "monitor: starting…");
+		let r: MonitorOutcome;
+		try {
+			r = await runMonitorRole({ experiment, note }, { cwd: ctx.cwd, mode: "command", onProgress: statusProgress(ctx, "monitor") });
+		} finally {
+			ctx.ui.setStatus("subagents", "");
+		}
+		postMonitorOutcome(pi, ctx, r);
+	};
 	pi.registerCommand("monitor", {
 		description:
 			"Monitor subagent (allowlisted experiment runner, isolated) -> runs one experiment, watches for errors, writes memory/monitor-<run>.md, returns OK/ERROR",
-		handler: async (args: string, ctx: ExtensionCommandContext) => {
-			const raw = args.trim();
-			const firstSpace = raw.search(/\s/);
-			const experiment = (firstSpace === -1 ? raw : raw.slice(0, firstSpace)).trim();
-			const note = firstSpace === -1 ? "" : raw.slice(firstSpace + 1).trim();
-			ctx.ui.setStatus("subagents", experiment ? `monitor: starting ${experiment}…` : "monitor: starting…");
-			let r: MonitorOutcome;
-			try {
-				r = await runMonitorRole(
-					{ experiment, note },
-					{ cwd: ctx.cwd, mode: "command", onProgress: statusProgress(ctx, "monitor") },
-				);
-			} finally {
-				ctx.ui.setStatus("subagents", "");
-			}
-			if (r.kind === "invalid") {
-				ctx.ui.notify(r.reason, r.level);
-				return;
-			}
-			if (r.kind === "failed") {
-				const why = failReasonVerbose(r.res);
-				ctx.ui.notify(`Monitor failed: ${why}`, "error");
-				pi.sendMessage(
-					{
-						customType: "subagent-monitor",
-						content: `Monitor FAILED (${r.res.stopReason ?? `exit ${r.res.exitCode}`}): ${why}`,
-						display: true,
-					},
-					{ deliverAs: "nextTurn" },
-				);
-				return;
-			}
-			pi.sendMessage(
-				{
-					customType: "subagent-monitor",
-					content: `Monitor verdict (${r.expName}, ${r.res.turns} turns):\n\n${r.summary}\n\nFull report -> memory/monitor-${r.run}.md\nLog -> ${r.logRel}`,
-					display: true,
-					details: { verdict: r.verdictWord, experiment: r.expName, runId: r.run },
-				},
-				{ deliverAs: "nextTurn" },
-			);
-			ctx.ui.notify(
-				`Monitor: ${r.verdictWord} — written to memory/monitor-${r.run}.md`,
-				r.verdictWord === "ERROR" ? "warning" : "info",
-			);
-		},
+		handler: monitorCmd,
+	});
+	pi.registerCommand("monitor-main", {
+		description:
+			"Monitor under its methodology = the isolated monitor sub-agent (4b: its tools are subprocess-only). Same as /monitor <experiment>.",
+		handler: monitorCmd,
 	});
 
 	// ----- /report -----
@@ -1040,52 +1118,30 @@ export default function subagents(pi: ExtensionAPI) {
 	});
 
 	// ----- /research -----
+	// /research and /research-main run the SAME isolated sub-agent (4b: web tools are subprocess-only).
+	const researchCmd = async (args: string, ctx: ExtensionCommandContext) => {
+		const raw = args.trim();
+		const firstSpace = raw.search(/\s/);
+		const topicRaw = firstSpace === -1 ? raw : raw.slice(0, firstSpace);
+		const question = firstSpace === -1 ? "" : raw.slice(firstSpace + 1).trim();
+		ctx.ui.setStatus("subagents", "research: starting…");
+		let r: ResearchOutcome;
+		try {
+			r = await runResearchRole({ topic: topicRaw, question }, { cwd: ctx.cwd, mode: "command", onProgress: statusProgress(ctx, "research") });
+		} finally {
+			ctx.ui.setStatus("subagents", "");
+		}
+		postResearchOutcome(pi, ctx, r);
+	};
 	pi.registerCommand("research", {
 		description:
 			"Research subagent (web search, isolated) -> a cited, claim-checked note in memory/research-<topic>.md. Needs: pi install npm:pi-web-access",
-		handler: async (args: string, ctx: ExtensionCommandContext) => {
-			const raw = args.trim();
-			const firstSpace = raw.search(/\s/);
-			const topicRaw = firstSpace === -1 ? raw : raw.slice(0, firstSpace);
-			const question = firstSpace === -1 ? "" : raw.slice(firstSpace + 1).trim();
-			ctx.ui.setStatus("subagents", "research: starting…");
-			let r: ResearchOutcome;
-			try {
-				r = await runResearchRole(
-					{ topic: topicRaw, question },
-					{ cwd: ctx.cwd, mode: "command", onProgress: statusProgress(ctx, "research") },
-				);
-			} finally {
-				ctx.ui.setStatus("subagents", "");
-			}
-			if (r.kind === "invalid") {
-				ctx.ui.notify(r.reason, r.level);
-				return;
-			}
-			if (r.kind === "failed") {
-				const why = failReasonVerbose(r.res);
-				ctx.ui.notify(`Research failed: ${why}. (Web tools require: pi install npm:pi-web-access)`, "error");
-				pi.sendMessage(
-					{
-						customType: "subagent-research",
-						content: `Research FAILED (${r.res.stopReason ?? `exit ${r.res.exitCode}`}): ${why}`,
-						display: true,
-					},
-					{ deliverAs: "nextTurn" },
-				);
-				return;
-			}
-			pi.sendMessage(
-				{
-					customType: "subagent-research",
-					content: `Research summary (topic: ${r.slug}, ${r.res.turns} turns):\n\n${r.summary}\n\nFull note + citations -> memory/research-${r.slug}.md`,
-					display: true,
-					details: { verdict: r.verdictWord },
-				},
-				{ deliverAs: "nextTurn" },
-			);
-			ctx.ui.notify(`Research: ${r.verdictWord} — written to memory/research-${r.slug}.md`, "info");
-		},
+		handler: researchCmd,
+	});
+	pi.registerCommand("research-main", {
+		description:
+			"Research under its methodology = the isolated research sub-agent (4b: web tools are subprocess-only). Same as /research <topic> <question>.",
+		handler: researchCmd,
 	});
 
 	// -------------------------------------------------------------------------
@@ -1279,5 +1335,121 @@ export default function subagents(pi: ExtensionAPI) {
 			if (r.kind === "failed") throw new Error(`research sub-agent failed: ${failReason(r.res, r.timedOut)}`);
 			return summaryResult(r.summary, { role: "research", verdict: r.verdictWord, turns: r.res.turns });
 		},
+	});
+
+	// -------------------------------------------------------------------------
+	// 4a: /<role>-main — run the MAIN session UNDER an in-session role's methodology (plan/verify/
+	// triage/report). On: snapshot the full tool set, clamp to the role set, inject the role body, and
+	// gate off-role tool calls. Single-slot activeRoleMain (replace, never stack). State persists across
+	// /reload + /resume so the clamp never strands the user (N2). (monitor/research-main are 4b — they're
+	// the isolated-sub-agent aliases registered above, not an in-session clamp.)
+	// -------------------------------------------------------------------------
+	const persistRoleMain = () => pi.appendEntry(ROLE_MAIN_ENTRY, { activeRole: activeRoleMain, savedTools: savedMainTools });
+	const setRoleMainStatus = (ctx: ExtensionContext) =>
+		ctx.ui.setStatus("role-main", activeRoleMain ? `▶ ${activeRoleMain}-main` : undefined);
+
+	const roleMainOn = (role: RoleMain, ctx: ExtensionCommandContext) => {
+		// Snapshot the FULL set only when entering from no-role; a role SWITCH keeps the original snapshot
+		// (so the eventual `off` restores the true pre-clamp set, incl. the six subagent_* + sibling tools).
+		if (activeRoleMain === null) savedMainTools = pi.getActiveTools();
+		activeRoleMain = role;
+		pi.setActiveTools([...ROLE_MAIN_TOOLS[role]]);
+		persistRoleMain();
+		setRoleMainStatus(ctx);
+		ctx.ui.notify(
+			`${role}-main ON — tools clamped to {${ROLE_MAIN_TOOLS[role].join(", ")}}, ${role} methodology injected. /${role}-main off to exit.`,
+			"info",
+		);
+	};
+	const roleMainOff = (ctx: ExtensionCommandContext) => {
+		if (activeRoleMain === null) {
+			ctx.ui.notify("No -main role is active.", "info");
+			return;
+		}
+		const was = activeRoleMain;
+		pi.setActiveTools(savedMainTools ?? [...ROLE_MAIN_FALLBACK_TOOLS]);
+		activeRoleMain = null;
+		savedMainTools = null;
+		persistRoleMain();
+		setRoleMainStatus(ctx);
+		ctx.ui.notify(`${was}-main OFF — full tools restored.`, "info");
+	};
+
+	for (const role of ROLE_MAIN) {
+		pi.registerCommand(`${role}-main`, {
+			description: `Run the MAIN session under the ${role} methodology (clamps tools + injects the body): /${role}-main on|off`,
+			handler: async (args: string, ctx: ExtensionCommandContext) => {
+				const cmd = parseOnOff(args);
+				if (cmd === "on") roleMainOn(role, ctx);
+				else if (cmd === "off") roleMainOff(ctx);
+				else
+					ctx.ui.notify(
+						activeRoleMain
+							? `Active: ${activeRoleMain}-main (tools: ${ROLE_MAIN_TOOLS[activeRoleMain].join(", ")}). Usage: /${role}-main on|off`
+							: `No -main role active. Usage: /${role}-main on|off  (clamps tools + injects the ${role} methodology)`,
+						"info",
+					);
+			},
+		});
+	}
+
+	// Inject ONLY the role methodology body (NOT the AGENTS.md brief — the main session already
+	// auto-loads it into e.systemPrompt; re-injecting would duplicate it). F1. Auto-reverts to base
+	// when no role is active (this returns nothing).
+	pi.on("before_agent_start", async (e, ctx) => {
+		if (!activeRoleMain) return;
+		const repo = findRepoRoot(ctx.cwd);
+		if (!repo) return;
+		const body = readIfExists(path.join(repo.root, "harness", "prompts", ROLE_MAIN_PROMPT[activeRoleMain]));
+		if (!body || !body.trim()) return;
+		return {
+			systemPrompt: `${e.systemPrompt}\n\n---\n\n# Active methodology — you are operating as ${activeRoleMain} in this main session. Apply it.\n\n${body.trim()}\n`,
+		};
+	});
+
+	// Load-bearing enforcement: while a role is active, BLOCK any tool call outside its allowed set.
+	// (The clamp narrows what the model SEES; this gate enforces even if a call slips through. The six
+	// subagent_* tools are intentionally NOT in any role set — don't spawn a sub-agent while you ARE it.)
+	pi.on("tool_call", async (event) => {
+		if (!activeRoleMain) return;
+		if (isToolBlockedInRoleMain(activeRoleMain, event.toolName)) {
+			return {
+				block: true,
+				reason: `${activeRoleMain}-main: '${event.toolName}' is not allowed in this role (allowed: ${ROLE_MAIN_TOOLS[activeRoleMain].join(", ")}). Run /${activeRoleMain}-main off first.`,
+			};
+		}
+	});
+
+	// Restore across /reload + /resume (N2, the highest-risk lifecycle bug). On /reload the runtime
+	// re-applies the persisted tool CLAMP but re-instantiates this module (activeRoleMain -> null), which
+	// would strand the user clamped read-only with no role + no body. Re-read the persisted state and
+	// re-apply the clamp + status; the always-armed before_agent_start re-injects the body. Safety net:
+	// if no role is active, ensure a clamp can never outlive its role — restore the recorded full set, or
+	// (defensive, no snapshot but tools look clamped) the best-effort fallback.
+	pi.on("session_start", async (_event, ctx) => {
+		const entries = ctx.sessionManager.getEntries();
+		const last = [...entries]
+			.reverse()
+			.find((en: { type: string; customType?: string }) => en.type === "custom" && en.customType === ROLE_MAIN_ENTRY) as
+			| { data?: { activeRole?: unknown; savedTools?: unknown } }
+			| undefined;
+		const persistedRole =
+			typeof last?.data?.activeRole === "string" && isRoleMain(last.data.activeRole) ? last.data.activeRole : null;
+		const recorded = Array.isArray(last?.data?.savedTools) ? (last.data.savedTools as string[]) : null;
+		if (persistedRole) {
+			activeRoleMain = persistedRole;
+			savedMainTools = recorded;
+			pi.setActiveTools([...ROLE_MAIN_TOOLS[persistedRole]]); // re-apply the clamp the role needs
+		} else {
+			activeRoleMain = null;
+			savedMainTools = null;
+			if (recorded && recorded.length) {
+				pi.setActiveTools(recorded);
+			} else {
+				const cur = pi.getActiveTools();
+				if (!cur.includes("bash") && !cur.includes("edit")) pi.setActiveTools([...ROLE_MAIN_FALLBACK_TOOLS]);
+			}
+		}
+		setRoleMainStatus(ctx);
 	});
 }

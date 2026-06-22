@@ -26,20 +26,12 @@ what happened so a reader can trust it and act on it. Lead with the result.
   ~1 screen. `paper`: neutral and rigorous, method + limitations forward, no first person.
   `self`: terse lab-notebook entry — what I did, what I saw, what's next.
 
-## Structure — write to `memory/reports/<subject>-<date>.md`
+## Structure (the shape of a good report)
 Title (a real headline, not "Report") · TL;DR / headline result · Context & goal ·
 What was done (method) · Results (quantified, each figure cited) · Interpretation ·
 Limitations & caveats · Next steps. Drop a section only if it would be empty; never pad one.
 
-## Output contract
-After the file is written, your final message is a line exactly `## SUMMARY` followed by
-AT MOST 10 lines: the one-line headline result, then the 2–4 facts a reader most needs,
-then the report path. Nothing else after it. The harness surfaces only the SUMMARY; the
-document is the product and lives on disk.
-
 ## Stance
 Clear, specific, honest. Write the report you'd want to read about someone else's
 experiment: it tells you the result in one breath, backs every number, and admits what
-it doesn't know. Write ONLY the report file — you may not touch `memory/MEMORY.md` (the
-handoff allows one file); if a durable lesson emerged, name it in your SUMMARY for the
-operator to file from the main session.
+it doesn't know. If a durable lesson emerged, name it for the operator to file.

@@ -13,16 +13,18 @@ the markdown harness uses for GitHub Copilot, reading the *same* markdown
 - **Commands:** `/plan`, `/verify`, `/triage`, `/monitor`, `/report`, `/research` (this engine);
   plus `/checks` and `/guard` from the sibling extensions
 
-### Two ways to invoke a role
+### Three ways to invoke a role
 
-Every role is reachable two ways — both funnel through the SAME isolated-sub-agent
-core (`runXRole` in `index.ts`), so they explore the repo, write their own file, and
-return only a ≤10-line summary identically. They differ only at the seam:
+The **command** and **tool** modes funnel through the SAME isolated-sub-agent core (`runXRole` in
+`index.ts`), so they explore the repo, write their own file, and return only a ≤10-line summary
+identically. The third, **`/<role>-main`**, is different: it runs the *main* session under the role's
+methodology. They differ at the seam:
 
 | Mode | How | Result delivery | Timeout / abort |
 |---|---|---|---|
 | **Command** (operator) | you type `/<role> …` | ≤10-line SUMMARY posted to the session on the **next turn** (`deliverAs:"nextTurn"`) | none (unchanged) |
 | **Tool** (the model) | the model calls **`subagent_<role>`** mid-turn | the SUMMARY is the tool result the model sees **in the same turn** | wall-clock timeout + `ctx.signal` |
+| **`/<role>-main`** (operator) | you type `/<role>-main on` | the **main** session runs under that role's methodology until `/<role>-main off` | n/a (in-session) |
 
 - **Tool names are namespaced** (`subagent_plan` / `subagent_verify` / `subagent_triage` /
   `subagent_monitor` / `subagent_report` / `subagent_research`). The `subagent_` prefix is
@@ -33,8 +35,27 @@ return only a ≤10-line summary identically. They differ only at the seam:
   lives on disk; only the summary (or the error) crosses back.
 - The model can spawn these mid-turn, so the extension arms a `session_shutdown` guard that
   SIGTERM→SIGKILLs any live child on `/reload`/quit (`ctx.signal` covers operator-abort only).
-- *(Coming in a later slice: a third `/<role>-main` mode that runs the **main** session under a
-  role's methodology.)*
+- **Sibling tools — `delegate` / `workflow`:** for *free-prompt, general-purpose* model-invoked
+  sub-agents (not these fixed roles), see the separate `harness/pi/delegate/` (one isolated **read-only**
+  worker the model spawns with a prompt it chooses, returning raw text — no SUMMARY contract) and
+  `harness/pi/workflow/` (a **governed parallel fan-out** of such workers, with a right-sizer + caps).
+  Both reuse the shared `subagent-core.ts` worker core + shutdown guard. Opt-in via `delegate` / `workflow` blocks.
+**`/<role>-main on|off` — run the main session under a role.** Single-slot (at most one active;
+`on` replaces). On entry it snapshots the active tools, **clamps** the tool surface, injects ONLY the
+role's `harness/prompts/<role>.md` body (not the AGENTS.md brief — the main session already has it), and
+a `tool_call` gate **blocks** anything off-role. `off` restores the snapshot.
+
+| `/<role>-main` | Tool clamp | Notes |
+|---|---|---|
+| `plan-main`, `report-main` | `read, grep, find, ls, write` | author memory/ artifacts (write is intentional — memory/ is writable) |
+| `verify-main`, `triage-main` | `read, grep, find, ls, run_check` | review-only. **`run_check` is sub-agent-only** (not registered in the main session → pi silently drops it), so these are effectively read-only in-session; run the real allowlisted checks via the `/verify` or `/checks` commands |
+| `monitor-main`, `research-main` | — | **4b:** their real tools (`run_experiment`, web) are subprocess-only, so these don't clamp the main session — they **spawn the isolated sub-agent** (identical to `/monitor` / `/research`) |
+
+The active role + tool snapshot **persist** (`pi.appendEntry`) and are restored on `session_start`, so a
+`/reload` or `/resume` re-applies the clamp + body and never strands you clamped-with-no-role; a null
+role on restore force-restores full tools so a clamp can't outlive its role. While a role is active you
+can still spawn the *isolated* sub-agent via the `/<role>` command — only the model's *in-session* tools
+are clamped.
 
 ### Per-role model & effort (Phase 0.5)
 

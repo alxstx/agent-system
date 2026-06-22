@@ -1,6 +1,63 @@
 # Decisions (why-log, ADR-lite)
 <!-- One short entry per non-obvious choice. Record the trade-off, not just the outcome. -->
 
+## 2026-06-21 — dual-mode subagents: model-auto-invocation trust boundary + `/<role>-main`
+- **Context:** the 6 roles were model-UNREACHABLE (only `/`-commands; the model emits tool calls, not
+  commands). Wanted (a) the running model to invoke a role mid-turn, and (b) the operator to run the main
+  session *under* a role's methodology.
+- **Trust boundary (tool-mode, slices 1+3):** the six `subagent_<role>` tools let the *model* spawn an
+  isolated sub-agent mid-turn — a new auto-invocation surface. Bounded by: the children stay
+  `--no-extensions`, shell-free, edit-free, per-role `--tools` allowlist (same isolation as the commands);
+  the result is **summary-only** (artifact on disk → main context protected); failures **throw** (a
+  returned `isError` is inert). No hard count cap by owner decision — gating is **auto-judge-only**
+  (the six exact names in `autoJudge.guardedTools`, exact-match), so an armed judge is the only DENY gate.
+- **`/<role>-main` (slice 4) — key choices:** inject **body-only** (just `harness/prompts/<role>.md`, NOT
+  the AGENTS.md brief — the main session already auto-loads it without `-nc`; re-injecting duplicates it,
+  F1). The tool **clamp + a `tool_call` block-gate** are BOTH required — the clamp narrows what the model
+  sees, the gate enforces (role restrictions are otherwise advisory). The terminal "write ONE file / reply
+  only `## SUMMARY`" contract was **stripped from triage.md + report.md bodies** (F2) — it lived in the
+  body AND the `handoff*` builder; injecting it into an interactive chat would truncate replies + nudge a
+  stray write. It now lives ONLY in the handoff builders (so the isolated sub-agent is unchanged; plan.md +
+  verify-change.md were already clean).
+- **Reload/resume (N2, highest-risk):** `activeRole` + the pre-clamp tool snapshot **persist** via
+  `appendEntry` and restore on `session_start` (re-apply clamp + status; the always-armed
+  `before_agent_start` re-injects the body). Without this, `/reload` re-applies the persisted tool clamp
+  but resets in-memory `activeRole→null` → user stranded clamped-read-only with no role. Plus a null→full
+  safety net so a clamp can never outlive its role.
+- **4b — monitor/research-main spawn the isolated sub-agent**, not an in-session clamp: their real tools
+  (`run_experiment`, web) are subprocess-only. Routing through the subprocess avoids registering privileged
+  tools into the full-tools main session. Net: real in-session `-main` is the four clean roles.
+- **Trade-off / caveat:** `run_check` is **sub-agent-only** (registered by runner.ts via `-e`, NOT in the
+  main session), so the verify/triage-main clamp lists it but pi's `setActiveToolsByName` silently drops
+  it — those roles are effectively read-only in-session; real checks run via the `/verify` or `/checks`
+  commands. Listed anyway so the clamp + gate already permit it the day it becomes a main-session tool.
+
+## 2026-06-21 — workflow: governed parallel fan-out (a governed batch of delegate workers)
+- **Context:** `delegate` spawns ONE read-only worker. Wanted the minimal local analog of the cloud
+  Workflow tool — fan ONE objective out to SEVERAL isolated read-only workers at once — without it
+  becoming a fan-out bomb or a scripting/DAG engine.
+- **Decision:** a separate `harness/pi/workflow/` extension registers `workflow({objective, tasks[]})`.
+  The main agent decomposes (passes `tasks[]`); the tool GOVERNS + runs, it does not invent subtasks.
+  **The governor is the point:** (1) a hard `maxParallel` cap (ceiling 8 — the cost kill-switch) that the
+  kept-list is ALWAYS code-clamped to, even on a successful judge reply (an injected "keep all 20" can't
+  spawn 20); (2) an optional `runJudge`-backed right-sizer (MODEL_REVIEW per D7) that prunes/merges
+  overlap, runs ONLY at `tasks.length ≥ judgeThreshold` (≈2×cap; below it the judge is pure overhead),
+  and **fails OPEN to the clamp** — it's a COST gate, NOT a safety gate. Kept tasks run through a
+  concurrency pool of isolated read-only workers (`runSubagent` directly, fed `objective` as shared
+  context — NOT via the delegate tool, so no double-cap/confirm). Results are **redacted at the source**
+  (`redactOnWrite`) before being written to `memory/workflow/<runId>/<i>-<slug>.md` (the `<i>` index is
+  load-bearing for filename uniqueness — slugs truncate + collide); only a compact index returns.
+  Per-request cap (`maxWorkflowsPerRequest`, reset on `agent_start`) + confirm-on-fanout + the shared
+  shutdown guard bound cost/blast. `synthesize` (default false) opt-in.
+- **Why:** keeps parallelism cheap and honest — the clamp is the real cost floor, the judge earns its
+  keep only on a genuine over-ask (where a merge beats truncation). Reuses delegate's worker core +
+  `subagent-core`'s shared helpers, so no new spawn/redaction/shutdown machinery.
+- **Trade-offs / residuals:** the right-sizer can't filter unsafe task content (fails open) — that rests
+  on `"workflow"` in `autoJudge.guardedTools` (gates the fan-out spawn) + the per-worker read residual
+  (out-of-repo reads, same as delegate). `delegate`'s + `workflow`'s per-request caps don't bound their
+  *sum* (~13 worst-case Opus spawns/request) — documented; a shared spawn budget is **deferred** to v2.
+  Disk exfil mitigated by redact-at-source + `.gitignore memory/workflow/`. Workers `--no-extensions` ⇒ no recursion.
+
 ## 2026-06-21 — model policy: Copilot-only ids, enforced by a repo-wide guard (dual-mode slice 2)
 - **Context:** the harness selects models by id. A bare `gpt-5.5` is ambiguous (many providers); a
   provider-qualified `openai/<id>` or `anthropic/<id>` is NOT rejected — it resolves to the **direct**

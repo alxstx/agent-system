@@ -29,6 +29,7 @@ cd harness/pi && npm install && npm run typecheck && npm test
 | `harness/pi/shared/subagent-core.test.ts` | `extractSummary` (the `## SUMMARY` grammar that crosses back to the main session); `cleanDetails` (metadata-only `details` filter — secret-redaction never scrubs `details`); `redactOnWrite` (redact-then-byte-cap before any disk write) |
 | `harness/pi/subagents/userturns.test.ts` | `slugify`; the six per-role `handoff*` contracts; the six per-role first-user-turn builders. These are the **dual-mode** seam — command-mode and tool-mode build byte-identical prompts from here |
 | `harness/pi/subagents/gate-config.test.ts` | Drift guard: the six `subagent_*` tools registered in `index.ts` are EXACTLY the ones gated in `harness/checks.json` (+ the example) `autoJudge.guardedTools`, and `contextDiff` stays false. The gate is exact-match — a typo silently un-gates a model-driven spawn, so this pins it |
+| `harness/pi/subagents/role-main.test.ts` | The `/<role>-main` tool-clamp tables + the load-bearing `isToolBlockedInRoleMain` gate predicate (null role blocks nothing; off-role + the six `subagent_*` tools blocked in every role), the role type guard, and the on/off parser |
 | `harness/pi/auto-judge/verdict.test.ts` | `parseVerdict` (fail-closed ALLOW/DENY grammar); `loadAutoJudgeConfig` (defaults + validation, crafted `checks.json` under temp dirs) |
 | `harness/pi/delegate/config.test.ts` | `delegate` tool config loader (read-only general sub-agent) |
 | `harness/pi/workflow/config.test.ts`, `harness/pi/workflow/right-size.test.ts` | `workflow` config + the governor's fan-out right-sizer |
@@ -81,6 +82,11 @@ Install once: `harness/pi/install.sh` (symlinks every extension into `~/.pi/agen
   sees its summary **in the same turn** (artifact stays on disk). A thrown failure (e.g. no
   `memory/tasks.md`) surfaces as an **error result** to the model (not a silent pass). `/reload` mid-call
   must not orphan the child (the `session_shutdown` guard reaps it).
+- **`/<role>-main`** (dual-mode slice 4): `/verify-main on` → footer shows `▶ verify-main`, the tool
+  surface clamps (the model can no longer `edit`/`bash`/`write`), and the verify methodology is injected.
+  Confirm it **survives `/reload` and `/resume`** with no half-state (still clamped + role shown, not
+  clamped-with-no-role). `/verify-main off` → full tools restored. `/monitor-main <exp>` runs the
+  **isolated** sub-agent (4b), same as `/monitor`. A `tool_call` for an off-role tool is **blocked**.
 - **auto-judge** (opt-in gate): `/autojudge on`, then trigger a guarded tool call → a judge subprocess
   ALLOW/DENYs it; DENY (or judge failure, fail-closed) blocks. `/autojudge off` to disarm.
 - **Model selection** (dual-mode slice 2): `/verify` sub-agent runs on `MODEL_REVIEW`, the others on
