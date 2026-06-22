@@ -33,11 +33,14 @@ harness/
       ├── install.sh       installs EVERY harness/pi/<ext> + shared/ into pi
       ├── shared/          checks-core.ts + redact.ts (one allowlist, one redactor)
       ├── subagents/       the engine: /plan /verify /triage /monitor /report /research
+      │                          + model-callable subagent_* tools + /<role>-main modes (dual-mode)
       ├── command-guard/   blocks destructive bash + boundary writes (+ /guard toggle)
       ├── secret-redaction/ scrubs secrets from main-session tool output
       ├── checks/          /checks — run the allowlist inline (no sub-agent, no tokens)
       ├── boundary-instructions/  steers .github/instructions/ rules on matching edits
-      └── auto-judge/      optional LLM-as-judge gate on guarded tool calls (/autojudge; off by default)
+      ├── auto-judge/      optional LLM-as-judge gate on guarded tool calls (/autojudge; off by default)
+      ├── delegate/        optional model-callable isolated READ-ONLY sub-agent (Task-tool analog; opt-in)
+      └── workflow/        optional model-callable governed parallel fan-out of read-only workers (opt-in)
 .github/
   ├── copilot-instructions.md, prompts/*.prompt.md, instructions/*.md  (Copilot wiring)
 ```
@@ -112,8 +115,24 @@ no pi required); do it if you want the real sub-agent commands.
 - **`/research <topic> <question>`** — web-researches a cited, claim-checked note → `memory/research-<topic>.md` (needs `pi install npm:pi-web-access`).
 
 Reviewing agents (`/verify`) run on **GPT-5.5**; all others on **Opus 4.8**; both at `xhigh`
-thinking. After authenticating pi (for example with GitHub Copilot), these are just model
-selections; confirm the exact ids with `pi --list-models`.
+thinking, resolved through the **GitHub Copilot** login (`github-copilot/<id>`). After authenticating
+pi, these are just model selections; confirm the exact ids with `pi --list-models`.
+
+**Each role is reachable three ways (dual-mode):** ① the **`/<role>`** command above (operator); ② the
+*running model* can call the role mid-turn via its namespaced **`subagent_<role>`** tool — the summary
+returns in the **same turn** (artifact still on disk); ③ **`/<role>-main on|off`** runs the *main*
+session under that role's methodology (clamps the tool surface + injects the role body; `monitor`/
+`research`-main spawn the isolated sub-agent instead). When an armed `auto-judge` is on, each model-driven
+`subagent_*` spawn is judged. See `harness/pi/subagents/README.md`.
+
+**Model-callable sub-agent tools** (opt-in; the *model* invokes these, not you):
+
+- **delegate** — the model spawns ONE isolated **read-only** sub-agent (`read,grep,find,ls`) with a prompt
+  it chooses and gets raw text back — the pi analog of Claude Code's Task/Agent tool. Opt-in via a
+  `delegate` block in `checks.json`; per-request cap + confirm-on-spawn (or the `auto-judge` gate headless).
+- **workflow** — the model fans ONE objective out to N isolated read-only workers (a **governed** parallel
+  batch: a right-sizer prunes overlap, a hard cap is the cost kill-switch), writing each redacted result
+  under `memory/workflow/<run>/` and returning a compact index. Opt-in via a `workflow` block.
 
 **Main-session extensions** (govern the human-driven session; sub-agents are immune):
 
@@ -121,7 +140,7 @@ selections; confirm the exact ids with `pi --list-models`.
 - **secret-redaction** — scrubs secret-shaped strings from tool output before the model sees them.
 - **`/checks [name]`** — runs the `checks.json` allowlist inline (no sub-agent, no tokens) → green/red widget.
 - **boundary-instructions** — surfaces `.github/instructions/*.instructions.md` rules when a matching file is edited.
-- **auto-judge** *(optional, off by default)* — an LLM-as-judge gate: when armed (`/autojudge on`) and a `checks.json` `autoJudge` block is present, a judge model must `ALLOW`/`DENY` each guarded tool call (bash/write/edit) before it runs, fail-closed. Each call spawns a judge subprocess and blocks until it replies — opt-in per session. Main-session only (sub-agents are immune).
+- **auto-judge** *(optional, off by default)* — an LLM-as-judge gate: when armed (`/autojudge on`) and a `checks.json` `autoJudge` block is present, a judge model must `ALLOW`/`DENY` each guarded tool call before it runs, fail-closed. Guards `bash`/`write`/`edit` by default; the shipped config also gates the **model-driven spawn tools** — `delegate`, `workflow`, and the six `subagent_*` role tools (their headless gate). Each call spawns a judge subprocess and blocks until it replies — opt-in per session. Main-session only (sub-agents are immune).
 
 **Optional companion — [ponytail](https://github.com/DietrichGebert/ponytail)** (`pi install git:github.com/DietrichGebert/ponytail`): a "lazy senior dev" reuse-ladder enforcer (YAGNI → stdlib → platform → installed dep → one-liner → minimum). Adds `/ponytail lite|full|ultra|off`, `/ponytail-review` (prune a diff), `/ponytail-audit` (prune the repo). The same ladder is baked into `AGENTS.md` ("Build discipline") so every tool and sub-agent already follows it; the extension adds live, toggleable enforcement in the pi main session (always-on at the chosen level — `lite` cheap, `off` free; doesn't reach the `--no-extensions` sub-agents). Referenced upstream, not vendored.
 
@@ -171,6 +190,7 @@ Open `pi` in your harnessed repo. A normal feature loop:
 | Run + watch an experiment | `/monitor <experiment> [note]` | `memory/monitor-<run>.md` (+ log) |
 | Write it up for an audience | `/report <subject> [--for=…]` | `memory/reports/<subject>-<date>.md` |
 | Research a web question | `/research <topic> <question>` | `memory/research-<topic>.md` |
+| Run the main session under a role | `/<role>-main on\|off` | (in-session methodology + tool clamp) |
 | Toggle the destructive-command guard | `/guard on\|off` | (session state) |
 | Toggle the LLM-as-judge gate (opt-in) | `/autojudge on\|off` | (session state) |
 
@@ -181,6 +201,8 @@ Open `pi` in your harnessed repo. A normal feature loop:
   - `boundaries` — JS regexes (repo-root-relative) of paths **command-guard** blocks writes into. Keep in sync with AGENTS.md's "Boundaries" prose.
   - `experiments` — the closed allowlist of long-lived runs `/monitor` may launch.
   - `autoJudge` (optional) — config for the **auto-judge** LLM gate: `judgeModel`, `guardedTools`, `failClosed`, `timeoutMs`, `contextDiff`, `policy`. Dormant unless present **and** armed via `/autojudge on`; see the `$autoJudge-note` in `checks.json`.
+  - `delegate` (optional) — opts in + configures the **delegate** model-callable tool: `maxCallsPerRequest`, `confirmOnSpawn`, `model`/`effort`, `capBytes`. Present (even `{}`) = active; absent = inert. See the `$delegate-note`.
+  - `workflow` (optional) — opts in + configures the **workflow** fan-out: `maxParallel` (cap), `concurrency`, `maxWorkflowsPerRequest`, the right-sizer (`useJudge`/`judgeThreshold`/`judgeModel`), `synthesize`, `maxResultBytes`, `timeoutMs`. See the `$workflow-note`.
   - `blamePathRegex` (optional) — tightens `/triage`'s `git-blame` path validation.
   See `harness/examples/checks.python-lmcache.json` for a full worked example.
 - **`harness/redaction.json`** (optional) — `{ replacement, extraPatterns, disableDefault }` to tune what secret-redaction (and the `/monitor` log tee) scrub.
