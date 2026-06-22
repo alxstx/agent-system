@@ -100,3 +100,6 @@ done < <(extension_names)
 echo
 echo "Installed $count extension(s). They read each repo's harness/checks.json at run time."
 echo "Open pi in a harnessed repo and run /reload, then use /plan, /verify, /checks, /monitor, /triage, /report, /research."
+echo
+echo "Optional companion — ponytail (lazy-senior-dev reuse discipline; main session only):"
+echo "  pi install git:github.com/DietrichGebert/ponytail   # then /ponytail [lite|full|ultra|off], /ponytail-review"

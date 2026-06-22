@@ -32,7 +32,9 @@ cd harness/pi && npm install && npm run typecheck && npm test
 | `harness/pi/subagents/role-main.test.ts` | The `/<role>-main` tool-clamp tables + the load-bearing `isToolBlockedInRoleMain` gate predicate (null role blocks nothing; off-role + the six `subagent_*` tools blocked in every role), the role type guard, and the on/off parser |
 | `harness/pi/auto-judge/verdict.test.ts` | `parseVerdict` (fail-closed ALLOW/DENY grammar); `loadAutoJudgeConfig` (defaults + validation, crafted `checks.json` under temp dirs) |
 | `harness/pi/delegate/config.test.ts` | `delegate` tool config loader (read-only general sub-agent) |
-| `harness/pi/workflow/config.test.ts`, `harness/pi/workflow/right-size.test.ts` | `workflow` config + the governor's fan-out right-sizer |
+| `harness/pi/workflow/config.test.ts` | `workflow` config loader + governor caps (maxParallel ceiling, concurrency clamp, judge threshold) |
+| `harness/pi/workflow/right-size.test.ts` | the governor's pure right-sizer (normalize/clamp/parse + the injectable concurrency pool) |
+| `harness/pi/workflow/paths.test.ts` | the `memory/workflow/<runId>/<i>-<slug>.md` path builder/validator (filename uniqueness, no traversal) |
 | `harness/pi/model-id-guard.test.ts` | **Repo-wide policy guard:** fails if ANY tracked file contains a direct provider-qualified model id (`openai/<id>` or `anthropic/<id>`). Policy is **Copilot-only** (`github-copilot/<id>`). Shells to `git grep`; needs git + a tracked tree |
 
 > The model-id guard is intentionally **repo-wide**, not `harness/`-scoped — a narrower scan would pass

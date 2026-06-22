@@ -215,4 +215,4 @@ gate) — keyless-runnable but model-quality-limited (see `TESTING.md`); + the C
 - /triage → `memory/triage-<id>.md`; /monitor → `memory/monitor-<run>.md` (+ `memory/runs/<run>.log`,
   gitignored); /report → `memory/reports/<subject>-<date>.md`; /research → `memory/research-<topic>.md`
 - Engine internals + per-role model policy → `harness/pi/subagents/README.md`
-- Dual-mode subagents (model-callable `subagent_*` tools + `/<role>-main`) + Copilot-only model fix (**slice 1 tool-mode BUILT 2026-06-20**; slices 2 Copilot-ids / 3 gate / 4 `/<role>-main` pending — namespaced tools, body-only `-main`, persist/restore, repo-wide id sweep) → `memory/plan-subagent-dual-mode.md`
+- Dual-mode subagents (model-callable `subagent_*` tools + `/<role>-main`) + Copilot-only model fix (**ALL 4 slices BUILT 2026-06-21**, offline-gated — namespaced tools, body-only `-main`, persist/restore, repo-wide id guard; live smokes + Copilot-id FLAG remain) → `memory/plan-subagent-dual-mode.md`

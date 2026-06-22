@@ -43,7 +43,7 @@
   },
   "autoJudge": {
     "judgeModel": "",
-    "guardedTools": ["bash", "write", "edit", "delegate", "subagent_plan", "subagent_verify", "subagent_triage", "subagent_monitor", "subagent_report", "subagent_research"],
+    "guardedTools": ["bash", "write", "edit", "delegate", "workflow", "subagent_plan", "subagent_verify", "subagent_triage", "subagent_monitor", "subagent_report", "subagent_research"],
     "failClosed": true,
     "timeoutMs": 20000,
     "contextDiff": true,
@@ -55,5 +55,17 @@
     "model": "",
     "effort": "",
     "capBytes": 16384
+  },
+  "workflow": {
+    "maxParallel": 5,
+    "concurrency": 5,
+    "maxWorkflowsPerRequest": 2,
+    "useJudge": true,
+    "judgeThreshold": 10,
+    "judgeModel": "",
+    "synthesize": false,
+    "maxInputTasks": 30,
+    "maxResultBytes": 32768,
+    "timeoutMs": 600000
   }
 }

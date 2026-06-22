@@ -13,7 +13,10 @@
 - **Stay in scope.** Discover unrelated work? Note it in `memory/tasks.md` and raise it — don't silently expand the change.
 - **When genuinely unsure, ask one sharp question** rather than guessing on something expensive to undo.
 - **Update memory after meaningful changes** (rules in `memory/MEMORY.md`). Keep the index short; push detail to topic files.
-- This repo runs **interactive**: propose a plan and pause for approval before large or irreversible changes.
+- This repo runs **interactive**: propose a plan and pause for approval before large or irreversible changes. *(On pi, the optional `auto-judge` extension can enforce a tool-call policy automatically — an LLM gate that blocks guarded calls until they pass; off by default, arm with `/autojudge on`. The optional `delegate` (one isolated read-only sub-agent) and `workflow` (a governed parallel fan-out of them) tools let the model offload self-contained read-only investigations; opt-in via `delegate`/`workflow` blocks in `harness/checks.json`. See `harness/README.md`.)*
+
+## Build discipline — the reuse ladder
+Before writing code, stop at the first rung that holds: **(1)** does it need to exist at all? (YAGNI) → **(2)** does the stdlib do it? → **(3)** a native platform feature? → **(4)** an already-installed dependency? → **(5)** can it be one line? → **(6)** only then, the minimum code that works. Deletion over addition; boring over clever; fewest files. No abstractions, dependencies, or boilerplate nobody asked for. Mark an intentional shortcut with a `ponytail:` comment naming its ceiling + upgrade path. **Not** lazy about: trust-boundary validation, error handling that prevents data loss, security, accessibility, or anything explicitly requested. (This brief reaches every tool and every `--no-extensions` sub-agent; on pi, the optional `/ponytail` extension adds live `lite|full|ultra` modes + `/ponytail-review` — see `harness/README.md`.)
 
 ## Definition of done
 A change is done only when:
