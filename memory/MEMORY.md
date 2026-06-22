@@ -8,15 +8,68 @@ sharing one allowlist + one redactor via `harness/pi/shared/`. Reuse discipline 
 into the brief + offered as an optional referenced pi extension. A 5th, opt-in main-session extension —
 auto-judge (LLM-as-judge tool-call gate, default OFF) — is built (slices 1–3: parser/config, activation
 wiring, checks.json/docs); only the live-pi smoke (re-run `install.sh` + `/reload` on an authed node) remains. See `memory/plan-llmjudge.md`.
-**Now building two model-callable tools** — `delegate` (general read-only subagent) then `workflow` (governed
-parallel fan-out) — per `memory/plan-general-subagent.md` + `memory/plan-workflow.md`. **delegate slice 1
-(the shared `subagent-core.ts` extraction + auto-judge de-dup) is DONE** (offline-gated); slice 0 + all
-live-pi smokes are FLAGs pending an authed pi (`pi` is installed here but `auth.json` is empty — needs `/login`).
+**`delegate` (model-callable read-only subagent) is COMPLETE — slices 1–4** per `memory/plan-general-subagent.md`:
+slice 1 = shared `subagent-core.ts` + auto-judge de-dup; slice 2 = the `harness/pi/delegate/` tool; slice 3 =
+`delegate` block in checks.json (+ example, `"delegate"` in guardedTools) + doc reconciliation + `decisions.md`;
+slice 4 = **live smoke PASSED keyless** (model→delegate→isolated read-only worker→text; confirm blocks+declines;
+per-request cap refuses; bad-model→throw→isError; details metadata-only). Worker OUTPUT quality needs Opus
+(local 8B emits tool-calls-as-text); plumbing all proven. **Next: `workflow`** (`memory/plan-workflow.md`, depends
+on delegate). **Slice 0 is
+PROVEN via a local keyless model** (Ollama `llama3.1:8b` in `~/.pi/agent/models.json`, no auth/cost): the
+main model calls a main-session `registerTool` tool (Claim 1, `--mode json` + RPC); `ctx.ui.confirm` blocks
+mid-execute when `hasUI=true` (NIT-3, via RPC). Only the cosmetic TUI modal *render* needs human eyes.
+Other live FLAGs (slice-2/4 smokes) can now run the same keyless way; subscription `/login` no longer required.
 **Also in flight — dual-mode subagents** (`memory/plan-subagent-dual-mode.md`): make every role model-callable
-mid-turn + add `/<role>-main` + switch models to Copilot-only. Slice 1 (tool-mode `subagent_*`) is BUILT; slices
-2–4 pending. Pausing for human review between slices.
+mid-turn + add `/<role>-main` + switch models to Copilot-only. Slices 1 (tool-mode `subagent_*`) + 2 (Copilot
+ids + repo-wide guard) BUILT; slices 3 (gate config) + 4 (`/<role>-main`) pending. Pausing for review between slices.
 
 ## Recent changes (newest first — keep ~7 max)
+- 2026-06-21 — **Dual-mode slice 2 BUILT (Copilot-only model ids + repo-wide guard).** `MODEL_DEFAULT`/
+  `MODEL_REVIEW` in `shared/subagent-core.ts` → `github-copilot/claude-opus-4.8` / `github-copilot/gpt-5.5`
+  (auto-judge + subagents import them — ONE place, no per-file edits). Swept the stale direct ids from 4
+  tracked docs (README, VERIFICATION-AGENT-PROMPT, BUILD-REPORT, decisions) + untracked plan-live-pi-e2e;
+  **`git rm --cached tmp/agent-system-plan/` + `.gitignore tmp/`** (carried forbidden ids). New repo-wide
+  guard `harness/pi/model-id-guard.test.ts` (git-grep; FAILS on any `openai/`|`anthropic/` id in tracked
+  files; negative-tested). New `TESTING.md` runbook (offline gate + live smokes + gotchas). typecheck clean,
+  **~102 tests** (+1 guard; count drifts with concurrent workflow work). **LIVE FLAG:** the 2 Copilot ids
+  are UNVERIFIED — this node has only `anthropic`+`ollama`
+  providers (no `github-copilot`); id format (`4.8` dotted vs live anthropic `4-8` dashed) also unconfirmed.
+  Confirm via `pi --list-models` on a Copilot node. See `memory/plan-subagent-dual-mode.md`.
+- 2026-06-21 — **workflow slices 0–1 BUILT** (governed parallel fan-out; offline-gated). Slice 0: `runJudge`
+  moved to `subagent-core.ts` (auto-judge's 2nd dup gone). Slice 1 — `harness/pi/workflow/`: `config.ts`
+  (`loadWorkflowConfig`, verdict.ts rigor — maxParallel ceiling 8 = kill-switch, concurrency clamped to
+  [1,maxParallel] incl. default-collapse, judgeThreshold 2×maxParallel); `right-size.ts` (PURE: normalize/
+  clampKept/parseRightSizerReply/runPool — bare-node-testable, no `.js` imports); `pruner.ts` (impure
+  `rightSize` — runJudge-backed, MODEL_REVIEW per D7, fail-OPEN + ALWAYS-clamp). `runPool` = injectable
+  concurrency pool (cap-honoring, throw→null, **abort drains queue + in-flight see signal**). `.gitignore
+  memory/workflow/`. **102 tests** (+24); review folded 1 major (redact-BEFORE-write ordering now pinned by
+  a throwing-redactor test, in workflow + subagent-core) + 1 nit (bare `KEEP:` → no junk task). Next:
+  slice 2 (the `workflow` tool: registerTool → governor → pool → workers → redact-on-write index). See `memory/plan-workflow.md`.
+- 2026-06-21 — **delegate slice 4 — LIVE SMOKE PASSED (keyless, Ollama llama3.1:8b).** End-to-end: main
+  model CALLS delegate → spawns an ISOLATED read-only worker (nested `/v1`) → returns text; `details`
+  metadata-only (`{mode,turns,model}`); block `model` override honored. Confirm gate (RPC, hasUI=true):
+  fires BEFORE spawn showing the prompt, BLOCKS until answered (held ~1.2s), and `confirmed:false` →
+  "spawn declined" (no spawn). Per-request cap (set to 1) → 2nd call refused pre-spawn. Bad worker model
+  → delegate THROWs → loop `isError=True` (proves the throw path; a returned isError is inert). Worker
+  OUTPUT quality model-limited (8B emits tool-calls-as-text under the heavy prompt) — needs Opus; all
+  PLUMBING proven. Not driven (lower value / hard keyless): abort-kill, /reload-orphan, auto-judge gate
+  (mechanism = `"delegate"` in guardedTools, configured). Smoke-only config tweaks reverted. delegate done.
+- 2026-06-20 — **delegate slice 3 BUILT** (config + docs; review-clean). `delegate` block + `$delegate-note`
+  in `harness/checks.json` and the python-lmcache example, **both with `"delegate"` in `autoJudge.guardedTools`**
+  (the headless gate). Doc reconciliation (R4-MAJOR, amend stale framing not bolt-on): `harness/README.md`
+  Principle 4 carve-out + a delegate bullet; `subagents/README.md` cross-ref; `architecture.md` glossary +
+  checks.json block inventory; `AGENTS.md` + template line-16 note; **`decisions.md`** entry (delegate +
+  the 2026-06-18 **workers→MODEL_DEFAULT / judges→MODEL_REVIEW (D7)** directive, now recorded). Also: hard
+  `subagentFailed` now **THROWs** (refusals still return) per the isError-inert finding. Both JSON validate;
+  typecheck clean, 76 tests. Review folded 1 nit. delegate symlinked. See `memory/plan-general-subagent.md`.
+- 2026-06-20 — **Slice 0 PROVEN without auth via a local keyless model.** Stood up Ollama + `llama3.1:8b`
+  (wired in `~/.pi/agent/models.json`, `api:openai-completions`, `compat` developer-role/reasoning-effort
+  off). Throwaway probe `harness/pi/_probe0/` (echo_probe tool). Verified: (1) **Claim 1** — the main model
+  emits a real native tool call to a main-session `registerTool` tool (`--mode json -p` AND `--mode rpc`);
+  (2) **NIT-3** — `ctx.ui.confirm` BLOCKS mid-execute when `hasUI=true` (RPC driver held the tool 1.5s until
+  the `extension_ui_response`, result reflected the answer). qwen2.5-coder:7b emitted tool calls as TEXT
+  (unusable) — llama3.1:8b does native `tool_calls`. **Residual:** TUI modal *render* = human eyes only.
+  Probe + ollama still installed; clean up after the TUI check. See `memory/plan-general-subagent.md` slice 0.
 - 2026-06-20 — **Dual-mode subagents slice 1 BUILT (tool-mode = the reported bug fix).** The 6 roles are
   now ALSO model-callable mid-turn via namespaced tools `subagent_{plan,verify,triage,monitor,report,research}`
   (the `subagent_` prefix is mandatory — registry is last-write-wins, no collision error). Each command
@@ -93,8 +146,33 @@ mid-turn + add `/<role>-main` + switch models to Copilot-only. Slice 1 (tool-mod
   `auto-judge/verdict.ts withDefaults` (clamp numerics `[1,ceiling]`, type booleans, non-object/`[]` block
   inert, `{}`=defaults). `subagent-core.ts` now owns `getPiInvocation`/`MODEL_REVIEW`/`EFFORT`/`runSubagent`
   + the cross-cutting `cleanDetails`/`redactOnWrite`/`registerShutdownGuard`; `subagents` + `auto-judge`
-  import them (dup DELETED 2026-06-20). `runJudge` still lives in `auto-judge/index.ts` — move it to
-  `subagent-core.ts` in the workflow slice (the right-sizer reuses it); do NOT drag `JUDGE_SYSTEM_PROMPT`/`parseVerdict` along.
+  import them (dup DELETED 2026-06-20). `runJudge`/`JudgeOutcome`/`RunJudgeOptions` ALSO moved to
+  `subagent-core.ts` (workflow slice 0, 2026-06-21) — auto-judge imports them; both its dups now gone.
+  `JUDGE_SYSTEM_PROMPT`/`parseVerdict` stayed in auto-judge (the workflow right-sizer brings its own).
+- **Running live-pi FLAGs keyless (no `/login`):** point `~/.pi/agent/models.json` at a local Ollama model
+  (`api:openai-completions`, `baseUrl:.../v1`, `compat.supportsDeveloperRole/ReasoningEffort:false`). Model
+  MUST do **native** `tool_calls` over `/v1` — `llama3.1:8b` does; `qwen2.5-coder:7b` emits tool calls as
+  plain TEXT (pi can't see them). Verify a candidate with a direct `curl .../v1/chat/completions` + `tools`.
+- **Live `subagent_*` tool-mode smoke — hard-won gotchas (2026-06-21, dual-mode slice 1):** the spawn
+  round-trip DID run on Ollama — the main model called `subagent_verify`, the isolated verifier spawned,
+  and the parent `fallbackWrite` persisted its `finalText` to `memory/verdict.md` (proof). But a CLEAN
+  captured transcript was not achievable with `llama3.1:8b`, for 4 reasons worth remembering: (1) **`pi
+  --mode json -p` buffers stdout; it flushes only on a CLEAN exit** — any run you SIGTERM/SIGKILL shows
+  **0 bytes** even though work happened (only a fast clean-exit run like a trivial prompt captures). (2)
+  **`--tools <extension-tool>` (e.g. `--tools subagent_verify`) HANGS pi at startup in `-p`** (0 bytes,
+  even trivial prompt) — can't use `--tools` to force the call; force via the prompt and load ONLY the
+  one extension with `--no-extensions -e <index.ts>` (loading ALL installed exts together also hung —
+  suspect `_probe0`). (3) `llama3.1:8b` does native tool calls for SIMPLE prompts but **degrades to
+  tool-call-AS-TEXT under the heavy verify system prompt** (`"...I am going to use the following json:
+  {..."`), so it's a non-functional nested verifier. (4) an **unauthed `openai/`|`anthropic/` child
+  HANGS** (doesn't fail fast) — so with the real model ids + no `/login`, a spawned verifier blocks.
+  Net: for a clean captured slice-1/2/4 smoke, use a **fast, native-tool-call model** (authed Copilot, or
+  a bigger local model), not `llama3.1:8b` as the sub-agent.
+- **pi `-p`/`--mode json` HANGS on stdin in a non-TTY (piped) context** — zero output, times out, no error.
+  Run `pi … < /dev/null` from a script (the harness spawns subagents with `stdio:["ignore",…]` for exactly
+  this). `--mode rpc` is the opposite: keep stdin OPEN — it's the JSONL command channel. RPC has `hasUI=true`;
+  `ctx.ui.confirm` → `extension_ui_request{method:"confirm"}` on stdout, BLOCKS until the client sends
+  `extension_ui_response{confirmed}` on stdin (how slice 0 proved confirm-blocks-mid-execute without a TUI).
 
 ## Index — where detail lives
 - Build report + live-pi FLAG status → `BUILD-REPORT.md`

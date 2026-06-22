@@ -10,8 +10,14 @@ node_modules/
 # /monitor per-run experiment logs (defense-in-depth; *.log above already covers .log files)
 memory/runs/
 
+# workflow fan-out worker results (redacted-at-source .md files; not .log, so *.log doesn't cover them)
+memory/workflow/
+
 # pi project-local config dir (per-machine; copy harness/mcp.example.json -> .pi/mcp.json to enable MCP)
 .pi/
 
 # Dev-only typecheck workspace lockfile (deps pinned in harness/pi/package.json; npm install regenerates)
 harness/pi/package-lock.json
+
+# throwaway planning scratch (carries unverified model ids; never committed)
+tmp/

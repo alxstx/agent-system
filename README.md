@@ -25,7 +25,7 @@ harness/
   │                          triage, monitor, report, research
   ├── templates/           pristine AGENTS.template.md
   ├── checks.json          per-repo allowlist: checks (verify/checks), boundaries
-  │                          (command-guard), experiments (/monitor)
+  │                          (command-guard), experiments (/monitor), autoJudge (auto-judge)
   ├── redaction.json       (optional) secret-redaction pattern overrides
   ├── mcp.example.json     MCP template (arXiv via pi-mcp-adapter) — copy to .pi/mcp.json
   ├── examples/            checks.python-lmcache.json — a complete worked example
@@ -36,7 +36,8 @@ harness/
       ├── command-guard/   blocks destructive bash + boundary writes (+ /guard toggle)
       ├── secret-redaction/ scrubs secrets from main-session tool output
       ├── checks/          /checks — run the allowlist inline (no sub-agent, no tokens)
-      └── boundary-instructions/  steers .github/instructions/ rules on matching edits
+      ├── boundary-instructions/  steers .github/instructions/ rules on matching edits
+      └── auto-judge/      optional LLM-as-judge gate on guarded tool calls (/autojudge; off by default)
 .github/
   ├── copilot-instructions.md, prompts/*.prompt.md, instructions/*.md  (Copilot wiring)
 ```
@@ -84,7 +85,7 @@ no pi required); do it if you want the real sub-agent commands.
 
 4. **Install the pi extensions.** Run `harness/pi/install.sh` once per machine — it
    symlinks **every** `harness/pi/<ext>/` (subagents, command-guard, secret-redaction,
-   checks, boundary-instructions) plus `shared/` into `~/.pi/agent/extensions/`
+   checks, boundary-instructions, auto-judge) plus `shared/` into `~/.pi/agent/extensions/`
    (override with `PI_EXTENSIONS_DIR`; `--copy` to copy instead of symlink, which also
    copies `shared/`). Open pi in the repo, run `/reload`.
 
@@ -95,6 +96,7 @@ no pi required); do it if you want the real sub-agent commands.
    pi install npm:pi-mcp-adapter         # MCP support
    uv tool install 'arxiv-mcp-server[pdf]'   # the one in-scope MCP (arXiv)
    cp harness/mcp.example.json .pi/mcp.json  # enable it (project-local)
+   pi install git:github.com/DietrichGebert/ponytail   # reuse-discipline extension (/ponytail*)
    ```
 
 ## Commands & extensions
@@ -119,6 +121,9 @@ selections; confirm the exact ids with `pi --list-models`.
 - **secret-redaction** — scrubs secret-shaped strings from tool output before the model sees them.
 - **`/checks [name]`** — runs the `checks.json` allowlist inline (no sub-agent, no tokens) → green/red widget.
 - **boundary-instructions** — surfaces `.github/instructions/*.instructions.md` rules when a matching file is edited.
+- **auto-judge** *(optional, off by default)* — an LLM-as-judge gate: when armed (`/autojudge on`) and a `checks.json` `autoJudge` block is present, a judge model must `ALLOW`/`DENY` each guarded tool call (bash/write/edit) before it runs, fail-closed. Each call spawns a judge subprocess and blocks until it replies — opt-in per session. Main-session only (sub-agents are immune).
+
+**Optional companion — [ponytail](https://github.com/DietrichGebert/ponytail)** (`pi install git:github.com/DietrichGebert/ponytail`): a "lazy senior dev" reuse-ladder enforcer (YAGNI → stdlib → platform → installed dep → one-liner → minimum). Adds `/ponytail lite|full|ultra|off`, `/ponytail-review` (prune a diff), `/ponytail-audit` (prune the repo). The same ladder is baked into `AGENTS.md` ("Build discipline") so every tool and sub-agent already follows it; the extension adds live, toggleable enforcement in the pi main session (always-on at the chosen level — `lite` cheap, `off` free; doesn't reach the `--no-extensions` sub-agents). Referenced upstream, not vendored.
 
 Only the short summaries cross back into your main session — the expensive
 repo-reading stays inside the sub-agents and on disk.
@@ -167,6 +172,7 @@ Open `pi` in your harnessed repo. A normal feature loop:
 | Write it up for an audience | `/report <subject> [--for=…]` | `memory/reports/<subject>-<date>.md` |
 | Research a web question | `/research <topic> <question>` | `memory/research-<topic>.md` |
 | Toggle the destructive-command guard | `/guard on\|off` | (session state) |
+| Toggle the LLM-as-judge gate (opt-in) | `/autojudge on\|off` | (session state) |
 
 ### Configure it (all per-repo, no code changes)
 
@@ -174,6 +180,7 @@ Open `pi` in your harnessed repo. A normal feature loop:
   - `checks` / `testFile` — the commands `/verify`'s `run_check` and `/checks` may run (fixed argv, `shell:false`).
   - `boundaries` — JS regexes (repo-root-relative) of paths **command-guard** blocks writes into. Keep in sync with AGENTS.md's "Boundaries" prose.
   - `experiments` — the closed allowlist of long-lived runs `/monitor` may launch.
+  - `autoJudge` (optional) — config for the **auto-judge** LLM gate: `judgeModel`, `guardedTools`, `failClosed`, `timeoutMs`, `contextDiff`, `policy`. Dormant unless present **and** armed via `/autojudge on`; see the `$autoJudge-note` in `checks.json`.
   - `blamePathRegex` (optional) — tightens `/triage`'s `git-blame` path validation.
   See `harness/examples/checks.python-lmcache.json` for a full worked example.
 - **`harness/redaction.json`** (optional) — `{ replacement, extraPatterns, disableDefault }` to tune what secret-redaction (and the `/monitor` log tee) scrub.
@@ -185,9 +192,9 @@ Open `pi` in your harnessed repo. A normal feature loop:
 - pi on **Node ≥ 22.19**; install the extensions with `harness/pi/install.sh`, then `/reload`.
 - Reviewing agents (`/verify`) run on **GPT-5.5**; all other roles run on **Opus 4.8**.
   Authenticate pi first (GitHub Copilot subscription login is enough when those models are listed),
-  then treat `anthropic/opus-4.8` and `openai/gpt-5.5` as model selections to confirm with
+  then treat `github-copilot/claude-opus-4.8` and `github-copilot/gpt-5.5` as model selections to confirm with
   `pi --list-models`. Change the ids in one place: the `MODEL_DEFAULT` / `MODEL_REVIEW`
-  constants in `harness/pi/subagents/index.ts`.
+  constants in `harness/pi/shared/subagent-core.ts`.
 - `/research` needs `pi install npm:pi-web-access`; the arXiv MCP needs `pi install npm:pi-mcp-adapter`
   + `uv tool install 'arxiv-mcp-server[pdf]'`.
 

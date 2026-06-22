@@ -1,6 +1,82 @@
 # Decisions (why-log, ADR-lite)
 <!-- One short entry per non-obvious choice. Record the trade-off, not just the outcome. -->
 
+## 2026-06-21 — model policy: Copilot-only ids, enforced by a repo-wide guard (dual-mode slice 2)
+- **Context:** the harness selects models by id. A bare `gpt-5.5` is ambiguous (many providers); a
+  provider-qualified `openai/<id>` or `anthropic/<id>` is NOT rejected — it resolves to the **direct**
+  provider, needing that provider's own key/auth. The owner authenticates with **GitHub Copilot** only.
+- **Decision:** every id is fully-qualified `github-copilot/<id>`. `MODEL_DEFAULT` =
+  `github-copilot/claude-opus-4.8`, `MODEL_REVIEW` = `github-copilot/gpt-5.5`, in ONE place
+  (`harness/pi/shared/subagent-core.ts`; `subagents` + `auto-judge` import them). **No direct
+  `openai/`|`anthropic/` id may appear in ANY tracked file** — enforced by `harness/pi/model-id-guard.test.ts`
+  (repo-wide `git grep`, runs in `npm test`). The throwaway `tmp/` scratch was untracked + gitignored
+  rather than kept in the sweep list.
+- **Why repo-wide, not harness-scoped:** a narrower guard passes green while a tracked file elsewhere
+  (the formerly-tracked `tmp/`) still carries a forbidden id. The guard builds its pattern from parts so
+  it never flags itself.
+- **Trade-off / FLAG:** the exact Copilot ids are **unverified** — the dev node has only `anthropic` +
+  `ollama` providers (no `github-copilot`), so `pi --list-models` couldn't confirm them, including the id
+  FORMAT (`claude-opus-4.8` dotted here vs the live anthropic `claude-opus-4-8` dashed). Accepted per the
+  plan ("if you can't auth Copilot, set the specified ids and flag it"); confirm on a Copilot node.
+
+## 2026-06-20 — delegate: model-callable read-only sub-agent tool + workers-only model scope
+- **Context:** the 6 human-fired roles each run a FIXED methodology. Wanted the pi analog of Claude
+  Code's Task/Agent tool — the **main-session model** spawning a free-prompt, isolated investigator.
+- **Decision:** a separate `harness/pi/delegate/` extension registers a `delegate({prompt})` tool.
+  Key choices: **read-only** surface (`read,grep,find,ls` — no write/edit/shell, so the residual risk
+  is leak/exfil, not mutation); **opt-in** via a `delegate` block resolved at `execute` (factory has no
+  cwd — presence opts in, absent/malformed = inert refuse); **per-request spawn cap** (default 3, reset
+  on `agent_start` not `turn_start`); **confirm-on-spawn** when `hasUI`, with `"delegate"` in
+  `autoJudge.guardedTools` as the **headless** gate; **raw final text** returned (no SUMMARY/file
+  contract — the worker's last message IS the answer), byte-capped, `details` **metadata-only**
+  (secret-redaction never scrubs `details`); returned text framed as **untrusted DATA** (return-path
+  injection mitigation is a prompt contract, not code). On hard `subagentFailed` the tool **THROWs**
+  (a *returned* `isError` is inert — `agent-loop.js:433` hardcodes `isError:false` on the no-throw path;
+  only a throw flags a real error), while **refusals** (cap/inert/declined-confirm) **return** informative
+  content — they're control-flow, not errors. Mirrors the dual-mode `subagent_<role>` tool-mode pattern.
+- **Why:** gives the model a bounded, isolated, read-only investigation primitive without exposing
+  mutation; opt-in + caps + confirm bound cost/blast; throw-vs-return matches the verified loop behavior.
+- **Model scope (records the 2026-06-18 operator directive):** "all sub-agents share one model" scopes
+  to **workers only**. Workers — the 5 non-review roles AND the delegate/workflow workers — run on
+  **MODEL_DEFAULT** (Opus 4.8); the adversarial-judge class (`/verify`, `auto-judge`, the workflow
+  right-sizer) stays on **MODEL_REVIEW** (GPT-5.5) per D7. No D7 divergence; built code untouched.
+- **Trade-off / residual:** built-in `read` takes ABSOLUTE paths and can't be path-jailed via `--tools`,
+  so out-of-repo reads (`~/.ssh`, `~/.aws`) are a documented residual; true confinement needs a custom
+  read tool (out of scope). Workers run `--no-extensions` ⇒ recursion bounded at depth 1.
+
+## 2026-06-15 — auto-judge: `failClosed` kept as a debug-only knob (D6)
+- **Context:** auto-judge gates main-session tool calls on a judge subprocess; when the judge times out
+  or fails to spawn, the gate must choose allow vs block.
+- **Decision:** keep a `failClosed` config field, default **true** (block on judge timeout/failure).
+  `false` (allow-on-failure) is retained only as a **debug-only / discouraged** escape hatch — slice 2
+  documents it as such and emits a warning notify when it lets a call through on failure.
+- **Why:** a safety gate that fails *open* is worse than no gate (it implies protection it isn't giving).
+  Keeping the knob (vs hard-coding) leaves a deliberate testing escape hatch without making fail-open the
+  default. Parsed in slice 1 (`verdict.ts`), enforced in slice 2 (`auto-judge/index.ts`).
+
+## 2026-06-15 — auto-judge: empty `judgeModel` → MODEL_REVIEW / GPT-5.5 (D7)
+- **Context:** auto-judge is an adversarial reviewer of a proposed action — the same shape as `/verify`.
+- **Decision:** an empty/whitespace `judgeModel` resolves to **MODEL_REVIEW** (`github-copilot/gpt-5.5`,
+  `--thinking xhigh`), NOT MODEL_DEFAULT (Opus). The model policy classes reviewing/adversarial-judge
+  agents as GPT-5.5 (`MODEL_REVIEW`); auto-judge joins that class.
+- **Why:** keep ONE model policy (see the 2026-06-14 "Per-role model policy" entry below). The id now lives
+  in ONE place — `harness/pi/shared/subagent-core.ts` — which `auto-judge/index.ts` imports (the old local
+  dup is gone). Exact id is a live-pi FLAG (`pi --list-models` on a Copilot node) — update only that constant if it differs.
+
+## 2026-06-15 — auto-judge: default OFF + single-shot no-tools judge (slice-2 design)
+- **Context:** unlike command-guard's `/guard` (cheap regex, default ON), auto-judge spawns a model AND
+  blocks the session on every guarded tool call — real cost + latency per call.
+- **Decision:** (1) the gate defaults **OFF** — opt-in per session via `/autojudge on` (an `autoJudge`
+  config block is necessary but not sufficient). (2) the judge is a **single-shot** subprocess with
+  **`--no-tools`** (verified in pi's CLI arg parser: disables all tools — `--tools ""` would NOT, pi's
+  falsy check at `main.js:336` falls back to the full default toolset), deciding from the policy +
+  serialized tool input (+ optional working-tree diff) in one round-trip.
+- **Why:** default-OFF avoids a committed config surprise-activating an LLM gate on `/reload`;
+  single-shot/no-tools keeps per-call latency predictable for a blocking gate (a multi-turn, file-reading
+  judge would stall the session on every bash/write/edit). Both confirmed with the user.
+- **Trade-off:** the judge can't inspect files beyond the optional diff (enable `contextDiff`, or widen
+  in a later slice). End-to-end behavior needs an authenticated pi — a live-pi FLAG (slice-3 smoke test).
+
 ## 2026-06-14 — Shared core in harness/pi/shared/, imported by relative path
 - **Context:** `/checks` and `run_check` must run the SAME allowlist; secret-redaction and `/monitor`
   must redact with the SAME patterns — otherwise main session and sub-agents drift.
@@ -28,6 +104,23 @@
 - **Decision:** command-guard boundaries and boundary-instructions `applyTo` match the target's path
   RELATIVE TO THE REPO ROOT (where harness/checks.json lives / cached at session_start), not `ctx.cwd`.
 - **Why:** cwd-relative matching silently misses when pi is launched from a subdirectory.
+
+## 2026-06-14 — Ponytail integrated by reference (not vendored) + ladder baked into the brief
+- **Context:** wanted ponytail's "lazy senior dev" reuse discipline (YAGNI → stdlib → platform →
+  installed dep → one-liner → minimum) in the harness. Ponytail ships a native pi extension
+  (`pi install git:github.com/DietrichGebert/ponytail`) AND a tool-agnostic ruleset.
+- **Decision:** (1) **reference + install** the upstream pi extension — do NOT vendor it into
+  `harness/pi/ponytail/` (same call as MCP: document the external piece, don't copy it); install.sh
+  prints a pointer instead of running a network install. (2) **Bake** a compact reuse-ladder into
+  `AGENTS.md` + `harness/templates/AGENTS.template.md` ("Build discipline") so it reaches every tool
+  AND the `--no-extensions` sub-agents.
+- **Why reference, not vendor:** copying a third-party repo we don't own contradicts both this
+  harness's reuse ethos and ponytail's own philosophy; upstream packaging + `pi install` auto-tracks
+  updates with zero sync burden.
+- **Caveat / trade-off:** the pi extension is **main-session only** (sub-agents spawn
+  `--no-extensions`) — the baked `AGENTS.md` ladder is what covers sub-agents + non-pi tools. While
+  active it injects its ruleset into the system prompt every turn (always-on token cost the harness
+  otherwise minimizes); `lite` is the cheap default, `off` is free.
 
 ## 2026-06-14 — MCP scope = arXiv only; web = pi-web-access (not an MCP)
 - **Decision:** web search via the `pi-web-access` extension; arXiv via `pi-mcp-adapter` + a one-server

@@ -35,7 +35,7 @@ is claimed "verified" that was only assumed.
 | # | Item | Status | Evidence / fallback |
 |---|---|---|---|
 | 1 | `--append-system-prompt` → /plan follows plan.md | **CONFIRMED (mechanism)** | `pi --help` + `usage.md`: flag takes text. `index.ts` passes the combined brief+methodology text directly; dead temp-file path removed. Whether the model *follows* it needs a live /plan → BLOCKED. |
-| 2 | model ids + `--thinking xhigh` | **PARTLY CONFIRMED** | `--thinking` enum incl. `xhigh` CONFIRMED (`--help`). `--model provider/id[:thinking]` form CONFIRMED. Exact ids `openai/gpt-5.5` / `anthropic/opus-4.8` are model selections after pi auth (GitHub Copilot login is enough when they are listed) and remain **BLOCKED** here because `pi --list-models` needs a login. Fallback ready: the two constants at the top of `index.ts` are the one-line fix. |
+| 2 | model ids + `--thinking xhigh` | **PARTLY CONFIRMED** | `--thinking` enum incl. `xhigh` CONFIRMED (`--help`). `--model provider/id[:thinking]` form CONFIRMED. Exact ids `github-copilot/claude-opus-4.8` / `github-copilot/gpt-5.5` are model selections after pi auth (GitHub Copilot login) and remain **UNVERIFIED** here — `pi --list-models` on the dev node shows only `anthropic` + `ollama` (no `github-copilot`), so the Copilot ids + format are unconfirmed. Fix in one place: the two constants in `harness/pi/shared/subagent-core.ts`. |
 | 3 | `-e` exposes pi-web-access tools under `--no-extensions` | **CONFIRMED (mechanism)** | Loading pi-web-access via pi's loader registers `web_search`,`fetch_content` (+`code_search`,`get_search_content`). CLI `-e npm:pi-web-access` under the FULL subagent flag set (`--no-extensions … --tools read,web_search,fetch_content`) resolved+loaded the extension and ran to the model call (only "No API key" stopped it). An actual web_search returning results → BLOCKED (auth/network). `research-runner.ts` fallback NOT needed. |
 | 4 | `ctx.signal` on command handlers → /checks aborts on Esc | **CONFIRMED (typed) + graceful fallback** | `ExtensionContext.signal: AbortSignal \| undefined` (types.d.ts:227-228); `ExtensionCommandContext extends ExtensionContext`. It is `undefined` when no turn is streaming, so `/checks` uses `ctx.signal?.aborted` + passes it to `runFixed` → cancels when present, runs to `timeoutMs` when absent. The live Esc-abort behavior → BLOCKED (needs the TUI). |
 | 5 | `deliverAs:"steer"` lands before the edit (boundary rule) | **BLOCKED — needs live pi** | `"steer"` is a valid `deliverAs` value (CONFIRMED, types.d.ts:861). BUT the docs/types say steer is delivered *after the current turn's tool calls*, so it may NOT reach the model before the edit. Implemented steer per the plan; the **`{block:true,reason}` fallback is documented in the code** — decide on a live pi. |
@@ -104,8 +104,8 @@ commits, and no real secrets. Verdict: **APPROVE WITH NITS**; the 3 nits (cmdlin
 stream + `details`, and a redundant `/research` ternary) were addressed in the final commit.
 
 ## Left for the human (live-pi, need Node ≥22.19 + authenticated pi)
-1. `pi --list-models` → confirm `openai/gpt-5.5` + `anthropic/opus-4.8` (FLAG #2); else edit the two
-   constants in `index.ts`.
+1. `pi --list-models` (on a **Copilot-authenticated** node) → confirm `github-copilot/claude-opus-4.8` +
+   `github-copilot/gpt-5.5` (FLAG #2); else edit the two constants in `harness/pi/shared/subagent-core.ts`.
 2. Run `/verify` → confirm it selects GPT-5.5 and `/plan` → Opus 4.8 after pi auth (FLAG #1, #2).
 3. `/research <topic> <q>` → confirm `web_search` returns results (FLAG #3).
 4. Edit a file matching `.github/instructions/*.instructions.md` → confirm the steered rule reaches the
