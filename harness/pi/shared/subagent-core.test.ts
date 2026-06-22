@@ -54,11 +54,11 @@ test("extractSummary: empty / whitespace-only → placeholder", () => {
 // --- cleanDetails (metadata-only `details` channel) ---------------------------------------------
 
 test("cleanDetails: keeps primitive (string/number/boolean) fields", () => {
-	assert.deepEqual(cleanDetails({ mode: "json", turns: 3, ok: true, model: "anthropic/opus-4.8" }), {
+	assert.deepEqual(cleanDetails({ mode: "json", turns: 3, ok: true, model: "github-copilot/claude-opus-4.8" }), {
 		mode: "json",
 		turns: 3,
 		ok: true,
-		model: "anthropic/opus-4.8",
+		model: "github-copilot/claude-opus-4.8",
 	});
 });
 
