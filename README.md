@@ -196,7 +196,7 @@ Open `pi` in your harnessed repo. A normal feature loop:
 
 ### Configure it (all per-repo, no code changes)
 
-- **`harness/checks.json`** — three allowlists the engine reads at run time:
+- **`harness/checks.json`** — the per-repo allowlists + opt-in tool blocks the engine reads at run time:
   - `checks` / `testFile` — the commands `/verify`'s `run_check` and `/checks` may run (fixed argv, `shell:false`).
   - `boundaries` — JS regexes (repo-root-relative) of paths **command-guard** blocks writes into. Keep in sync with AGENTS.md's "Boundaries" prose.
   - `experiments` — the closed allowlist of long-lived runs `/monitor` may launch.
